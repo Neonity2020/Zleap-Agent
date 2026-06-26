@@ -4,7 +4,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { npmPackageMeta, platformTag } from './lib/platforms.mjs';
-import { githubRepoSlug, payloadArchiveName, releaseDownloadBase } from './distribution.mjs';
+import { downloadMirrors, githubRepoSlug, payloadArchiveName, releaseDownloadBase } from './distribution.mjs';
 
 const REPO_SLUG = githubRepoSlug();
 
@@ -35,6 +35,7 @@ for (const platform of platforms) {
   // distribution.json (single source of truth), never hardcoded.
   const archive = payloadArchiveName(version, platform);
   const url = `${releaseDownloadBase(version)}/${archive}`;
+  const mirrors = downloadMirrors();
 
   const out = join(NPM_ROOT, meta.dir);
   await rm(out, { recursive: true, force: true });
@@ -42,7 +43,11 @@ for (const platform of platforms) {
   await cp(sourceManifest, join(out, 'manifest.json'));
   await writeFile(
     join(out, 'download.json'),
-    `${JSON.stringify({ schema: 1, platform, version, archive, url }, null, 2)}\n`,
+    `${JSON.stringify(
+      mirrors.length > 0 ? { schema: 1, platform, version, archive, url, mirrors } : { schema: 1, platform, version, archive, url },
+      null,
+      2,
+    )}\n`,
     'utf8',
   );
   await writeFile(join(out, 'README.md'), platformReadme(meta.name), 'utf8');

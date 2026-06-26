@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { writeInstallState, type InstallMethod } from './install-method.js';
 import { installAppFromRelease, type InstallAppOptions, type InstallAppResult } from './install.js';
 import { installPayload } from './payload.js';
-import { resolvePayloadDir } from './payload-fetch.js';
+import { resolvePayloadDir, type DownloadProgress } from './payload-fetch.js';
 import { zleapLayout } from './layout.js';
 import { resolveRuntimeRoot } from './paths.js';
 import { seedAppFromBundle } from './seed-app.js';
@@ -22,6 +22,7 @@ export type EnsureRuntimeInstalledOptions = {
   version?: string;
   skipChecksum?: boolean;
   installApp?: (options?: InstallAppOptions) => Promise<InstallAppResult>;
+  onDownloadProgress?: (progress: DownloadProgress) => void;
 };
 
 export type EnsureRuntimeInstalledResult = {
@@ -95,7 +96,9 @@ export async function ensureRuntimeInstalled(
       };
     }
 
-    const materialized = await resolvePayloadDir(options.payloadDir, options.downloadIfMissing === true);
+    const materialized = await resolvePayloadDir(options.payloadDir, options.downloadIfMissing === true, {
+      onProgress: options.onDownloadProgress,
+    });
     try {
       const installed = await installPayload({
         payloadDir: materialized.payloadDir,

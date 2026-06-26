@@ -45,6 +45,30 @@ function progress(options: DesktopBootstrapOptions, step: string, message: strin
   void appendDesktopLog(`[${step}] ${message}`);
 }
 
+/** Throttled reporter that surfaces payload download progress to the splash. */
+function makeDownloadReporter(
+  options: DesktopBootstrapOptions,
+): (progress: { transferred: number; total?: number }) => void {
+  let lastEmit = 0;
+  let lastPct = -1;
+  return ({ transferred, total }) => {
+    const now = Date.now();
+    const pct = total ? Math.floor((transferred / total) * 100) : undefined;
+    const finished = total ? transferred >= total : false;
+    if (!finished && now - lastEmit < 400 && pct === lastPct) {
+      return;
+    }
+    lastEmit = now;
+    lastPct = pct ?? lastPct;
+    const mb = (bytes: number) => (bytes / 1_048_576).toFixed(0);
+    const message =
+      pct !== undefined
+        ? `下载运行时 ${pct}%（${mb(transferred)}/${mb(total ?? 0)} MB）`
+        : `下载运行时 ${mb(transferred)} MB…`;
+    options.onProgress?.({ step: 'download', message, ok: true });
+  };
+}
+
 async function readAppMetadataForRoot(appRoot: string): Promise<AppMetadata | undefined> {
   const fromLayout = await readInstalledAppMetadata();
   if (fromLayout) return fromLayout;
@@ -107,11 +131,13 @@ export async function runDesktopBootstrap(
     if (bundledRoot) {
       progress(options, 'seed', '同步运行时到 ~/.zleap/app/current…');
     }
+    const reportDownload = makeDownloadReporter(options);
     const runtime = await ensureRuntimeInstalled({
       method: 'desktop',
       bundledRoot,
       payloadDir: options.payloadDir,
       downloadIfMissing: options.downloadIfMissing === true,
+      onDownloadProgress: reportDownload,
     });
     progress(options, 'deps', runtimeStatusMessage(runtime.source, runtime.version));
 

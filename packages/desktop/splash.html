@@ -88,9 +88,13 @@
           const s = el.getAttribute('data-step');
           const sidx = order.indexOf(s);
           el.classList.remove('active', 'done', 'error');
-          if (step === 'error') el.classList.add('error');
+          if (step === 'error') {
+            el.classList.add('error');
+            return;
+          }
+          const isActive = s === step || (step === 'download' && s === 'deps');
+          if (isActive) el.classList.add('active');
           else if (sidx < idx) el.classList.add('done');
-          else if (s === step || (step === 'download' && s === 'deps')) el.classList.add('active');
         });
       };
     </script>

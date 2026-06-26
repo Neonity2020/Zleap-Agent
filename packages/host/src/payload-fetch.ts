@@ -11,12 +11,61 @@ export type PayloadDownloadDescriptor = {
   url: string;
   archive: string;
   files: Record<string, { sha256?: string; size?: number }>;
+  mirrors?: string[];
 };
 
 export type MaterializedPayload = {
   payloadDir: string;
   cleanupDir?: string;
 };
+
+export type DownloadProgress = {
+  transferred: number;
+  total?: number;
+  url: string;
+};
+
+export type MaterializeOptions = {
+  onProgress?: (progress: DownloadProgress) => void;
+};
+
+const IDLE_TIMEOUT_MS = Math.max(5_000, Number(process.env.ZLEAP_DOWNLOAD_TIMEOUT_MS) || 60_000);
+const MAX_ATTEMPTS = Math.max(1, Number(process.env.ZLEAP_DOWNLOAD_RETRIES) || 4);
+
+/**
+ * Build the ordered list of URLs to try. A China-friendly mirror/proxy can be
+ * configured via the ZLEAP_DOWNLOAD_MIRROR env var (comma-separated). Each entry
+ * may be: a prefix proxy ending in '/' (e.g. https://ghproxy.com/), a template
+ * containing '{url}', or a host replacement (e.g. https://mirror.example.com).
+ * The original URL is always tried last as a fallback.
+ */
+export function downloadCandidates(url: string, descriptorMirrors: string[] = []): string[] {
+  const envMirrors = (process.env.ZLEAP_DOWNLOAD_MIRROR ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  // Env-provided mirrors take precedence over ones baked into download.json.
+  const mirrors = [...envMirrors, ...descriptorMirrors.map((m) => m.trim()).filter(Boolean)];
+  const list = mirrors.map((mirror) => applyMirror(mirror, url));
+  list.push(url);
+  return [...new Set(list)];
+}
+
+function applyMirror(mirror: string, url: string): string {
+  if (mirror.includes('{url}')) {
+    return mirror.replace('{url}', url);
+  }
+  if (mirror.endsWith('/')) {
+    return `${mirror}${url}`;
+  }
+  try {
+    const original = new URL(url);
+    const replacement = new URL(mirror);
+    return url.replace(`${original.protocol}//${original.host}`, `${replacement.protocol}//${replacement.host}`);
+  } catch {
+    return url;
+  }
+}
 
 /** True when the directory has a trusted descriptor but not the heavy archives yet. */
 export function isThinPayloadDescriptor(dir: string): boolean {
@@ -34,7 +83,11 @@ export function readPayloadDownloadDescriptor(descriptorDir: string): PayloadDow
     return undefined;
   }
   try {
-    const dl = JSON.parse(readFileSync(downloadPath, 'utf8')) as { url?: string; archive?: string };
+    const dl = JSON.parse(readFileSync(downloadPath, 'utf8')) as {
+      url?: string;
+      archive?: string;
+      mirrors?: string[];
+    };
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
       payload?: { files?: Record<string, { sha256?: string; size?: number }> };
     };
@@ -45,6 +98,7 @@ export function readPayloadDownloadDescriptor(descriptorDir: string): PayloadDow
       url: dl.url,
       archive: dl.archive ?? basename(new URL(dl.url).pathname),
       files: manifest.payload?.files ?? {},
+      mirrors: Array.isArray(dl.mirrors) ? dl.mirrors.filter((m): m is string => typeof m === 'string') : undefined,
     };
   } catch {
     return undefined;
@@ -54,6 +108,7 @@ export function readPayloadDownloadDescriptor(descriptorDir: string): PayloadDow
 /** Download + verify payload archives described by a thin descriptor directory. */
 export async function materializePayloadFromDescriptor(
   descriptorDir: string,
+  options: MaterializeOptions = {},
 ): Promise<MaterializedPayload> {
   const descriptor = readPayloadDownloadDescriptor(descriptorDir);
   if (!descriptor) {
@@ -63,7 +118,7 @@ export async function materializePayloadFromDescriptor(
   const cleanupDir = await mkdtemp(join(tmpdir(), 'zleap-payload-dl-'));
   const archivePath = join(cleanupDir, descriptor.archive || 'payload.tar.gz');
   process.stderr.write(`Downloading Zleap payload from ${descriptor.url}\n`);
-  await downloadFile(descriptor.url, archivePath);
+  await downloadFile(descriptor.url, archivePath, options.onProgress, descriptor.mirrors);
 
   const extractRoot = join(cleanupDir, 'extract');
   await mkdir(extractRoot, { recursive: true });
@@ -95,6 +150,7 @@ export async function materializePayloadFromDescriptor(
 export async function resolvePayloadDir(
   payloadDir: string,
   downloadIfMissing = false,
+  options: MaterializeOptions = {},
 ): Promise<MaterializedPayload> {
   if (existsSync(join(payloadDir, 'app.tar.gz'))) {
     return { payloadDir };
@@ -103,23 +159,62 @@ export async function resolvePayloadDir(
     if (!downloadIfMissing) {
       throw new Error(`Payload archives missing under ${payloadDir}; enable download to fetch from release`);
     }
-    return materializePayloadFromDescriptor(payloadDir);
+    return materializePayloadFromDescriptor(payloadDir, options);
   }
   throw new Error(`Payload directory is incomplete: ${payloadDir}`);
 }
 
-function downloadFile(url: string, dest: string, redirects = 0): Promise<void> {
+/**
+ * Download a file with a stall timeout, automatic retries, and optional mirror
+ * fallback. A bare httpsGet has no timeout, so a stalled connection (common when
+ * reaching GitHub release CDNs from mainland China) would hang forever with no
+ * feedback. This surfaces progress and fails fast so the caller can retry.
+ */
+async function downloadFile(
+  url: string,
+  dest: string,
+  onProgress?: (progress: DownloadProgress) => void,
+  descriptorMirrors: string[] = [],
+): Promise<void> {
+  const candidates = downloadCandidates(url, descriptorMirrors);
+  let lastError: Error | undefined;
+  for (const candidate of candidates) {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      try {
+        await downloadOnce(candidate, dest, onProgress);
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        await rm(dest, { force: true }).catch(() => undefined);
+        process.stderr.write(
+          `Payload download attempt ${attempt}/${MAX_ATTEMPTS} from ${candidate} failed: ${lastError.message}\n`,
+        );
+        if (attempt < MAX_ATTEMPTS) {
+          await delay(1_000 * attempt);
+        }
+      }
+    }
+  }
+  throw lastError ?? new Error(`Download failed for ${url}`);
+}
+
+function downloadOnce(
+  url: string,
+  dest: string,
+  onProgress?: (progress: DownloadProgress) => void,
+  redirects = 0,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     if (redirects > 5) {
       reject(new Error(`Too many redirects while downloading ${url}`));
       return;
     }
-    const request = httpsGet(url, (response) => {
+    const request = httpsGet(url, { headers: { 'user-agent': 'zleap-installer' } }, (response) => {
       const status = response.statusCode ?? 0;
       if (status >= 300 && status < 400 && response.headers.location) {
         response.resume();
         const next = new URL(response.headers.location, url).toString();
-        downloadFile(next, dest, redirects + 1).then(resolve, reject);
+        downloadOnce(next, dest, onProgress, redirects + 1).then(resolve, reject);
         return;
       }
       if (status !== 200) {
@@ -127,10 +222,23 @@ function downloadFile(url: string, dest: string, redirects = 0): Promise<void> {
         reject(new Error(`Download failed (HTTP ${status}) for ${url}`));
         return;
       }
+      const total = Number(response.headers['content-length']) || undefined;
+      let transferred = 0;
+      response.on('data', (chunk: Buffer) => {
+        transferred += chunk.length;
+        onProgress?.({ transferred, total, url });
+      });
       pipeline(response, createWriteStream(dest)).then(resolve, reject);
+    });
+    request.setTimeout(IDLE_TIMEOUT_MS, () => {
+      request.destroy(new Error(`Download stalled (no data for ${IDLE_TIMEOUT_MS}ms) from ${url}`));
     });
     request.on('error', reject);
   });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function sha256File(file: string): Promise<string> {

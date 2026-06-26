@@ -160,6 +160,7 @@ type PayloadDownloadDescriptor = {
   url: string;
   archive: string;
   files: Record<string, { sha256?: string; size?: number }>;
+  mirrors?: string[];
 };
 
 function resolvePayloadDownload(): PayloadDownloadDescriptor | undefined {
@@ -173,7 +174,11 @@ function resolvePayloadDownload(): PayloadDownloadDescriptor | undefined {
     return undefined;
   }
   try {
-    const dl = JSON.parse(readFileSync(downloadPath, 'utf8')) as { url?: string; archive?: string };
+    const dl = JSON.parse(readFileSync(downloadPath, 'utf8')) as {
+      url?: string;
+      archive?: string;
+      mirrors?: string[];
+    };
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as RuntimeMetadata & {
       payload?: { files?: Record<string, { sha256?: string; size?: number }> };
     };
@@ -184,6 +189,7 @@ function resolvePayloadDownload(): PayloadDownloadDescriptor | undefined {
       url: dl.url,
       archive: dl.archive ?? basename(new URL(dl.url).pathname),
       files: manifest.payload?.files ?? {},
+      mirrors: Array.isArray(dl.mirrors) ? dl.mirrors.filter((m): m is string => typeof m === 'string') : undefined,
     };
   } catch {
     return undefined;
@@ -211,7 +217,7 @@ async function downloadPlatformPayload(
   const cleanupDir = await mkdtemp(join(tmpdir(), 'zleap-payload-dl-'));
   const archivePath = join(cleanupDir, descriptor.archive || 'payload.tar.gz');
   process.stderr.write(`Downloading Zleap payload from ${descriptor.url}\n`);
-  await downloadFile(descriptor.url, archivePath);
+  await downloadFile(descriptor.url, archivePath, makeStderrProgress(), descriptor.mirrors);
 
   const extractRoot = join(cleanupDir, 'extract');
   await mkdir(extractRoot, { recursive: true });
@@ -240,18 +246,109 @@ async function downloadPlatformPayload(
   return { payloadDir, cleanupDir };
 }
 
-function downloadFile(url: string, dest: string, redirects = 0): Promise<void> {
+type DownloadProgress = { transferred: number; total?: number };
+
+const IDLE_TIMEOUT_MS = Math.max(5_000, Number(process.env.ZLEAP_DOWNLOAD_TIMEOUT_MS) || 60_000);
+const MAX_ATTEMPTS = Math.max(1, Number(process.env.ZLEAP_DOWNLOAD_RETRIES) || 4);
+
+/** Ordered candidate URLs: ZLEAP_DOWNLOAD_MIRROR then descriptor mirrors, origin last. */
+function downloadCandidates(url: string, descriptorMirrors: string[] = []): string[] {
+  const envMirrors = (process.env.ZLEAP_DOWNLOAD_MIRROR ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const mirrors = [...envMirrors, ...descriptorMirrors.map((m) => m.trim()).filter(Boolean)];
+  const list = mirrors.map((mirror) => applyMirror(mirror, url));
+  list.push(url);
+  return [...new Set(list)];
+}
+
+function applyMirror(mirror: string, url: string): string {
+  if (mirror.includes('{url}')) {
+    return mirror.replace('{url}', url);
+  }
+  if (mirror.endsWith('/')) {
+    return `${mirror}${url}`;
+  }
+  try {
+    const original = new URL(url);
+    const replacement = new URL(mirror);
+    return url.replace(`${original.protocol}//${original.host}`, `${replacement.protocol}//${replacement.host}`);
+  } catch {
+    return url;
+  }
+}
+
+function makeStderrProgress(): (progress: DownloadProgress) => void {
+  let lastEmit = 0;
+  let lastPct = -1;
+  const mb = (bytes: number) => (bytes / 1_048_576).toFixed(0);
+  return ({ transferred, total }) => {
+    const now = Date.now();
+    const pct = total ? Math.floor((transferred / total) * 100) : undefined;
+    const finished = total ? transferred >= total : false;
+    if (!finished && now - lastEmit < 500 && pct === lastPct) {
+      return;
+    }
+    lastEmit = now;
+    lastPct = pct ?? lastPct;
+    const line =
+      pct !== undefined
+        ? `  downloading ${pct}% (${mb(transferred)}/${mb(total ?? 0)} MB)`
+        : `  downloading ${mb(transferred)} MB`;
+    if (process.stderr.isTTY) {
+      process.stderr.write(`\r${line}${finished ? '\n' : ''}`);
+    } else if (finished || pct === undefined || pct % 10 === 0) {
+      process.stderr.write(`${line}\n`);
+    }
+  };
+}
+
+async function downloadFile(
+  url: string,
+  dest: string,
+  onProgress?: (progress: DownloadProgress) => void,
+  descriptorMirrors: string[] = [],
+): Promise<void> {
+  const candidates = downloadCandidates(url, descriptorMirrors);
+  let lastError: Error | undefined;
+  for (const candidate of candidates) {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      try {
+        await downloadOnce(candidate, dest, onProgress);
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        await rm(dest, { force: true }).catch(() => undefined);
+        process.stderr.write(
+          `Payload download attempt ${attempt}/${MAX_ATTEMPTS} from ${candidate} failed: ${lastError.message}\n`,
+        );
+        if (attempt < MAX_ATTEMPTS) {
+          await delayMs(1_000 * attempt);
+        }
+      }
+    }
+  }
+  throw lastError ?? new Error(`Download failed for ${url}`);
+}
+
+function downloadOnce(
+  url: string,
+  dest: string,
+  onProgress?: (progress: DownloadProgress) => void,
+  redirects = 0,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     if (redirects > 5) {
       reject(new Error(`Too many redirects while downloading ${url}`));
       return;
     }
-    const request = httpsGet(url, (response) => {
+    const request = httpsGet(url, { headers: { 'user-agent': 'zleap-installer' } }, (response) => {
       const status = response.statusCode ?? 0;
       if (status >= 300 && status < 400 && response.headers.location) {
         response.resume();
         const next = new URL(response.headers.location, url).toString();
-        downloadFile(next, dest, redirects + 1).then(resolve, reject);
+        downloadOnce(next, dest, onProgress, redirects + 1).then(resolve, reject);
         return;
       }
       if (status !== 200) {
@@ -259,10 +356,23 @@ function downloadFile(url: string, dest: string, redirects = 0): Promise<void> {
         reject(new Error(`Download failed (HTTP ${status}) for ${url}`));
         return;
       }
+      const total = Number(response.headers['content-length']) || undefined;
+      let transferred = 0;
+      response.on('data', (chunk: Buffer) => {
+        transferred += chunk.length;
+        onProgress?.({ transferred, total });
+      });
       pipeline(response, createWriteStream(dest)).then(resolve, reject);
+    });
+    request.setTimeout(IDLE_TIMEOUT_MS, () => {
+      request.destroy(new Error(`Download stalled (no data for ${IDLE_TIMEOUT_MS}ms) from ${url}`));
     });
     request.on('error', reject);
   });
+}
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function sha256File(file: string): Promise<string> {

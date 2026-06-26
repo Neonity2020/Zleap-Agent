@@ -100,6 +100,7 @@ describe('runDesktopBootstrap', () => {
       bundledRoot: undefined,
       payloadDir: undefined,
       downloadIfMissing: false,
+      onDownloadProgress: expect.any(Function),
     });
     expect(mocks.startDetachedServe).toHaveBeenCalledWith(
       expect.objectContaining({

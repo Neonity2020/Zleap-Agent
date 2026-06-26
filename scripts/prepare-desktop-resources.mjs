@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { OFFICIAL_PLATFORMS, platformTag } from './lib/platforms.mjs';
-import { payloadArchiveName, releaseDownloadBase } from './distribution.mjs';
+import { downloadMirrors, payloadArchiveName, releaseDownloadBase } from './distribution.mjs';
 import { archiveTarGz, sha256File } from './lib/archive.mjs';
 
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -43,13 +43,18 @@ if (!existsSync(join(payloadSource, 'manifest.json'))) {
 const manifest = JSON.parse(readFileSync(join(payloadSource, 'manifest.json'), 'utf8'));
 const archive = payloadArchiveName(version, platform);
 const url = `${releaseDownloadBase(version)}/${archive}`;
+const mirrors = downloadMirrors();
 
 await resetDir(outDir);
 await mkdir(outDir, { recursive: true });
 
 await writeFile(
   join(outDir, 'download.json'),
-  `${JSON.stringify({ schema: 1, platform, version, archive, url }, null, 2)}\n`,
+  `${JSON.stringify(
+    mirrors.length > 0 ? { schema: 1, platform, version, archive, url, mirrors } : { schema: 1, platform, version, archive, url },
+    null,
+    2,
+  )}\n`,
   'utf8',
 );
 await writeFile(join(outDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');

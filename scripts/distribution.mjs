@@ -69,6 +69,23 @@ export function releaseDownloadBase(version, dist = loadDistribution()) {
   throw new Error('distribution.release.artifactBaseUrl is required');
 }
 
+/**
+ * Optional China-friendly mirror/proxy entries baked into download.json so the
+ * desktop GUI (which can't read user env vars) tries a fast domestic mirror
+ * before the GitHub origin. Configure via ZLEAP_DOWNLOAD_MIRROR (comma-separated)
+ * or distribution.release.downloadMirrors.
+ */
+export function downloadMirrors(dist = loadDistribution()) {
+  const fromEnv = (process.env.ZLEAP_DOWNLOAD_MIRROR ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const configured = Array.isArray(dist.release?.downloadMirrors)
+    ? dist.release.downloadMirrors.map((entry) => String(entry).trim()).filter(Boolean)
+    : [];
+  return [...new Set([...fromEnv, ...configured])];
+}
+
 export function updaterManifestUrl(dist = loadDistribution()) {
   if (process.env.ZLEAP_UPDATER_MANIFEST_URL?.trim()) {
     return process.env.ZLEAP_UPDATER_MANIFEST_URL.trim();
