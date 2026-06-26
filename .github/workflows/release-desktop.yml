@@ -3,7 +3,13 @@ name: Release Desktop
 # Configuration → build → publish, aligned with mainstream tooling:
 #   - version is a single source of truth (root package.json); CI never writes back
 #     to committed config (tauri.conf.json / distribution.json).
-#   - dependencies are reused via actions/cache only (no cross-run artifact reuse).
+#   - expensive dependency bundles (managed Node + portable Postgres) are reused via
+#     actions/cache. GitHub scopes caches per ref, and a tag run can only restore
+#     caches from its own ref or the DEFAULT branch (main) — never from another tag.
+#     So we PRIME those caches on `main` (push + weekly schedule): the build-node /
+#     build-postgres jobs run on every trigger, while the heavy build/publish jobs
+#     run on tags only. Tag releases then restore the warm main cache instead of
+#     recompiling Postgres from source (~9 min) on every release.
 #   - desktop builds + minisign updater (latest.json) come from the official
 #     tauri-apps/tauri-action.
 #   - latest.json = Tauri updater manifest; install-manifest.json = custom runtime
@@ -15,9 +21,19 @@ on:
   push:
     tags:
       - 'v*'
+    # Prime the managed Node / Postgres caches on the default branch so tag
+    # releases can restore them (GitHub caches are not shared across tags).
+    branches:
+      - main
+  schedule:
+    # Keep the primed main caches alive (GitHub evicts caches idle > 7 days).
+    - cron: '0 18 * * 0'
 
 jobs:
   build-cli-npm:
+    # Non-priming job: only runs for real releases (tag) or manual dispatch.
+    # On main/schedule the workflow only warms the Node/Postgres caches.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -213,6 +229,8 @@ jobs:
           compression-level: 0
 
   build-runtime:
+    # Non-priming job: only runs for real releases (tag) or manual dispatch.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: [build-node, build-postgres]
     strategy:
       fail-fast: false
