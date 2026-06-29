@@ -45,7 +45,7 @@ export interface PlatformAdapter {
   /**
    * Restart the interactive login without a full detach: regenerate a QR
    * (WeChat), re-issue an OAuth device code (Feishu CLI), or reconnect the WS
-   * (Feishu node-sdk). Driven by a `refresh`/`connect` control command.
+   * (Feishu node-sdk). Driven by a `refresh` control command.
    */
   reauth?(): Promise<void>;
   /** Drop stored credentials and return to a disconnected state. */

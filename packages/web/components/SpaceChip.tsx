@@ -1,8 +1,10 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { DURATION, EASE_OUT } from "@/lib/motion";
 import { Check, ChevronRight, Clock, Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { summarizeToolPayload } from '../lib/toolPayload';
 import type { Envelope, SpaceView, ToolCallView, WorkPane } from '../lib/types';
 import { spaceMeta, type SpaceItem } from '../lib/spaces';
@@ -25,9 +27,10 @@ type SpaceChipProps = {
 /**
  * Progressive workspace summary shown inline in the conversation: how many
  * tools the kernel ran in this space, plus the one currently executing. The
- * full, scrollable tool history lives in the 调度台 — click to open that tab.
+ * full, scrollable tool history lives in the workspace console — click to open that tab.
  */
 export function SpaceChip({ space, pane, envelope, spaces, activeTool, running = false, onOpen }: SpaceChipProps) {
+  const { t } = useTranslation();
   const meta = spaceMeta(spaces, space.spaceId, space.label);
   const [, setTick] = useState(0);
   // This card is "live" only while it is the still-running dispatch (no frozen
@@ -45,11 +48,11 @@ export function SpaceChip({ space, pane, envelope, spaces, activeTool, running =
   const progressSummary = pane?.statusLine ? summarizeText(pane.statusLine) : '';
   const statusLabel = envelope
     ? envelope.status === 'success'
-      ? '完成'
-      : '失败'
+      ? t('space.statusDone', { defaultValue: '完成' })
+      : t('space.statusFailed', { defaultValue: '失败' })
     : live
-      ? '工作中'
-      : '等待结果';
+      ? t('space.statusWorking', { defaultValue: '工作中' })
+      : t('space.statusPending', { defaultValue: '等待结果' });
   const statusTone = envelope?.status === 'failed' ? 'rose' : envelope?.status === 'success' ? 'emerald' : 'muted';
   const task = pane?.goal || pane?.context?.detail;
 
@@ -62,7 +65,7 @@ export function SpaceChip({ space, pane, envelope, spaces, activeTool, running =
   }, [live]);
 
   return (
-    <div className="group w-full max-w-xl overflow-hidden rounded-xl border border-border bg-surface/95 text-left shadow-xs transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-border-strong hover:bg-surface hover:shadow-sm">
+    <div className="group w-full max-w-xl overflow-hidden rounded-xl border border-border bg-card/95 text-left shadow-xs transition-all duration-[var(--duration-base)] ease-out hover:-translate-y-px hover:border-border hover:bg-card hover:shadow-sm">
       <div className="flex items-start gap-2.5 px-3 py-2.5">
         <span
           className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl"
@@ -72,7 +75,7 @@ export function SpaceChip({ space, pane, envelope, spaces, activeTool, running =
         </span>
 
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-ink">
+          <div className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-foreground">
             <span className="truncate">{meta.label}</span>
             <StatusPill tone={statusTone} label={statusLabel} />
           </div>
@@ -85,8 +88,8 @@ export function SpaceChip({ space, pane, envelope, spaces, activeTool, running =
           {live ? (
             // Live progress for the running dispatch only. A finished card drops
             // this — its per-dispatch stats live in the footer status line, kept
-            // independent of the reused pane (per the 复用/独立 split).
-            <div className="mt-1.5 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
+            // independent of the reused pane (per the reuse/isolation split).
+            <div className="mt-1.5 flex min-w-0 items-center gap-2 text-2xs text-muted-foreground">
               <span className="shrink-0">{maxSteps ? `${total}/${maxSteps} steps` : `${total} tools`}</span>
               {elapsed ? (
                 <span className="inline-flex shrink-0 items-center gap-1">
@@ -110,9 +113,9 @@ export function SpaceChip({ space, pane, envelope, spaces, activeTool, running =
           <button
             type="button"
             onClick={() => onOpen(space.id)}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-surface-2 hover:text-ink"
-            title="打开调度工作区"
-            aria-label="打开调度工作区"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            title={t('space.openWorkspace', { defaultValue: '打开调度工作区' })}
+            aria-label={t('space.openWorkspace', { defaultValue: '打开调度工作区' })}
           >
             <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
           </button>
@@ -121,21 +124,21 @@ export function SpaceChip({ space, pane, envelope, spaces, activeTool, running =
 
       <div className="px-3 pb-2.5">
         {live && maxSteps ? (
-          <div className="h-1 overflow-hidden rounded-pill bg-surface-2/80">
+          <div className="h-1 overflow-hidden rounded-pill bg-muted/80">
             <motion.div
               className="h-full rounded-pill"
               initial={false}
               animate={{ width: `${progress * 100}%` }}
-              transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: DURATION.base, ease: EASE_OUT }}
               style={{ backgroundColor: meta.accent + '66' }}
             />
           </div>
         ) : null}
 
-        <div className="mt-2 flex min-w-0 items-center gap-2 rounded-lg bg-surface-2/60 px-2.5 py-1.5 text-xs">
+        <div className="mt-2 flex min-w-0 items-center gap-2 rounded-lg bg-muted/60 px-2.5 py-1.5 text-xs">
           <ResultIcon status={envelope?.status} running={live} />
           <div className="min-w-0 flex-1 truncate text-muted-foreground">
-            <span className="font-medium text-ink">{statusLabel}</span>
+            <span className="font-medium text-foreground">{statusLabel}</span>
             {resultSummary ? (
               <>
                 <span className="text-muted-foreground"> · </span>
@@ -169,11 +172,11 @@ function toolSummary(tool: ToolCallView): string {
 function StatusPill({ tone, label }: { tone: 'emerald' | 'rose' | 'muted'; label: string }) {
   const toneClass =
     tone === 'emerald'
-      ? 'bg-emerald-500/10 text-emerald-600'
+      ? 'bg-success/10 text-success'
       : tone === 'rose'
-        ? 'bg-rose-500/10 text-rose-500'
-        : 'bg-surface-2 text-muted-foreground';
-  return <span className={`shrink-0 rounded-pill px-1.5 py-0.5 text-[11px] font-medium ${toneClass}`}>{label}</span>;
+        ? 'bg-destructive/10 text-destructive'
+        : 'bg-muted text-muted-foreground';
+  return <span className={`shrink-0 rounded-pill px-1.5 py-0.5 text-2xs font-medium ${toneClass}`}>{label}</span>;
 }
 
 function ResultIcon({ status, running }: { status?: 'success' | 'failed'; running: boolean }) {
@@ -181,12 +184,12 @@ function ResultIcon({ status, running }: { status?: 'success' | 'failed'; runnin
     return <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />;
   }
   if (status === 'failed') {
-    return <X className="h-3.5 w-3.5 shrink-0 text-rose-500" />;
+    return <X className="h-3.5 w-3.5 shrink-0 text-destructive" />;
   }
   if (!status) {
     return <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
   }
-  return <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />;
+  return <Check className="h-3.5 w-3.5 shrink-0 text-success" />;
 }
 
 function summarizeText(value: string): string {

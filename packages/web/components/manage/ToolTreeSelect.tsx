@@ -244,7 +244,7 @@ export function ToolTreeSelect({ toolSets, tools, mcpServers = [], selectedToolS
                                   <span className="line-clamp-2 text-xs leading-4 text-muted-foreground">{tool.description}</span>
                                 ) : null}
                               </span>
-                              {tool?.origin === 'mcp' ? <span className="pt-0.5 text-[10px] text-muted-foreground">mcp</span> : null}
+                              {tool?.origin === 'mcp' ? <span className="pt-0.5 text-2xs text-muted-foreground">mcp</span> : null}
                             </button>
                           );
                         })}
@@ -263,9 +263,9 @@ export function ToolTreeSelect({ toolSets, tools, mcpServers = [], selectedToolS
           {selectedToolSetIds.map((id) => {
             const set = toolSets.find((s) => s.id === id);
             return (
-              <Badge key={`set:${id}`} variant="secondary" className="h-6 gap-1.5 px-2.5 pr-1.5 text-[13px] font-normal">
+              <Badge key={`set:${id}`} variant="secondary" className="h-6 gap-1.5 px-2.5 pr-1.5 text-xs font-normal">
                 <span className="font-medium">{set?.label ?? id}</span>
-                <span className="text-[11px] text-muted-foreground">{groupById.get(id)?.toolIds.length ?? set?.toolIds.length ?? 0}</span>
+                <span className="text-2xs text-muted-foreground">{groupById.get(id)?.toolIds.length ?? set?.toolIds.length ?? 0}</span>
                 <button
                   type="button"
                   onClick={() => emit(new Set([...selectedSets].filter((x) => x !== id)), selectedTools)}
@@ -278,7 +278,7 @@ export function ToolTreeSelect({ toolSets, tools, mcpServers = [], selectedToolS
             );
           })}
           {selectedToolIds.map((id) => (
-            <Badge key={`tool:${id}`} variant="outline" className="h-6 gap-1 px-2.5 pr-1.5 text-[13px] font-normal">
+            <Badge key={`tool:${id}`} variant="outline" className="h-6 gap-1 px-2.5 pr-1.5 text-xs font-normal">
               {toolById.get(id)?.label ?? id}
               <button
                 type="button"

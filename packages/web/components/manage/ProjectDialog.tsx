@@ -5,17 +5,9 @@ import { FolderOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 import { slugify } from '@/lib/utils';
-import { postJson, webApiFetch } from '@/lib/api';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
+import { createProject, fetchProjectDefaults } from '@/lib/services';
+import { useEntityFormDialog } from '@/hooks/useEntityFormDialog';
+import { ManageDialog, ManageDialogFooterActions, ManageField, ManageForm } from './manage-ui';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { ProjectFolderPicker } from './ProjectFolderPicker';
 
@@ -28,103 +20,84 @@ type ProjectDialogProps = {
 /** Register a project folder. The displayed project name is derived from the folder name. */
 export function ProjectDialog({ open, onOpenChange, onSaved }: ProjectDialogProps) {
   const { t } = useTranslation();
-  const [path, setPath] = useState('');
   const [projectsRoot, setProjectsRoot] = useState('');
   const [homeDir, setHomeDir] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    setPath('');
-    void webApiFetch('/api/projects/defaults')
-      .then((res) => res.json())
-      .then((body: { root?: string; home?: string }) => {
-        if (body.root) setProjectsRoot(body.root);
-        if (body.home) setHomeDir(body.home);
-      })
-      .catch(() => {});
-  }, [open]);
-
-  const applyFolder = (selected: string) => {
-    setPath(selected);
-  };
-
-  const submit = async () => {
-    const trimmedPath = path.trim();
-    const name = projectNameFromPath(trimmedPath);
-    if (!trimmedPath || !name) {
-      toast.error(t('common.required'));
-      return;
-    }
-    setBusy(true);
-    try {
-      const body = (await postJson('/api/projects', {
+  const { values, patch, busy, submit } = useEntityFormDialog<{ path: string }>({
+    open,
+    initial: { path: '' },
+    onSubmit: async (form) => {
+      const trimmedPath = form.path.trim();
+      const name = projectNameFromPath(trimmedPath);
+      if (!trimmedPath || !name) throw new Error(t('common.required'));
+      const body = await createProject({
         id: projectIdFromPath(name, trimmedPath),
         name,
         path: trimmedPath,
         createPath: true,
-      })) as { project?: { id: string; name: string } };
+      });
       const project = body.project;
       if (!project?.id) throw new Error('project_create_failed');
       toast.success(`${name} ✓`);
       onSaved(project);
-      onOpenChange(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+    },
+    onSuccess: () => onOpenChange(false),
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    void fetchProjectDefaults().then((body) => {
+      if (body.root) setProjectsRoot(body.root);
+      if (body.home) setHomeDir(body.home);
+    });
+  }, [open]);
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{t('project.new')}</DialogTitle>
-            <DialogDescription>{t('project.newDesc')}</DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="project-path">{t('project.path')}</Label>
-              <InputGroup className="h-9 font-mono text-xs">
-                <InputGroupInput
-                  id="project-path"
-                  value={path}
-                  onChange={(e) => {
-                    setPath(e.target.value);
-                  }}
-                  placeholder={projectsRoot ? `${projectsRoot}/my-project` : t('project.pathPlaceholder')}
-                  autoFocus
-                />
-                <InputGroupAddon align="inline-end">
-                  <InputGroupButton
-                    title={t('project.browse')}
-                    aria-label={t('project.browse')}
-                    onClick={() => setPickerOpen(true)}
-                  >
-                    <FolderOpen className="size-4" />
-                  </InputGroupButton>
-                </InputGroupAddon>
-              </InputGroup>
-              <p className="text-xs text-muted-foreground">{t('project.pathHint')}</p>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
-            <Button onClick={submit} disabled={busy}>{t('common.create')}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ManageDialog
+        open={open}
+        onOpenChange={onOpenChange}
+        title={t('project.new')}
+        description={t('project.newDesc')}
+        footer={
+          <ManageDialogFooterActions
+            onCancel={() => onOpenChange(false)}
+            onConfirm={() => void submit()}
+            confirmLabel={t('common.create')}
+            busy={busy}
+          />
+        }
+      >
+        <ManageForm>
+          <ManageField label={t('project.path')} htmlFor="project-path" description={t('project.pathHint')}>
+            <InputGroup className="h-9 font-mono text-xs">
+              <InputGroupInput
+                id="project-path"
+                value={values.path}
+                onChange={(e) => patch({ path: e.target.value })}
+                placeholder={projectsRoot ? `${projectsRoot}/my-project` : t('project.pathPlaceholder')}
+                autoFocus
+              />
+              <InputGroupAddon align="inline-end">
+                <InputGroupButton
+                  title={t('project.browse')}
+                  aria-label={t('project.browse')}
+                  onClick={() => setPickerOpen(true)}
+                >
+                  <FolderOpen className="size-4" />
+                </InputGroupButton>
+              </InputGroupAddon>
+            </InputGroup>
+          </ManageField>
+        </ManageForm>
+      </ManageDialog>
 
       <ProjectFolderPicker
         open={pickerOpen}
         onOpenChange={setPickerOpen}
-        initialPath={path.trim() || homeDir || projectsRoot}
-        onSelect={applyFolder}
+        initialPath={values.path.trim() || homeDir || projectsRoot}
+        onSelect={(selected) => patch({ path: selected })}
       />
     </>
   );

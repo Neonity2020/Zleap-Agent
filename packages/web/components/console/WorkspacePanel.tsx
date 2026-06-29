@@ -8,6 +8,7 @@ import type { SpaceItem } from '../../lib/spaces';
 import type { RunStatus, WorkPane } from '../../lib/types';
 import type { WorkspaceFileTarget } from '../../lib/workspaceFiles';
 import { WorkspaceFilesDrawer } from '../WorkspaceFilesDrawer';
+import { IconButton } from '../ui/icon-button';
 import { WorkConsole } from './WorkConsole';
 import { WorkConsoleTabs } from './WorkConsoleTabs';
 
@@ -56,7 +57,7 @@ export function WorkspacePanel({
 }: WorkspacePanelProps) {
   const { t } = useTranslation();
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background text-ink">
+    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="flex h-9 shrink-0 items-center border-b border-border pr-1.5">
         <WorkConsoleTabs
           spaces={spaces}
@@ -71,15 +72,15 @@ export function WorkspacePanel({
               : t('workspace.artifactsTab', { defaultValue: '产物' })
           }
         />
-        <button
-          type="button"
+        <IconButton
+          size="icon-xs"
           onClick={onCollapse}
-          className="ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-muted hover:text-ink"
+          className="ml-1 shrink-0 text-muted-foreground"
           title={t('workspace.collapse')}
           aria-label={t('workspace.collapse')}
         >
-          <PanelRightClose className="h-3.5 w-3.5" />
-        </button>
+          <PanelRightClose className="size-3.5" />
+        </IconButton>
       </div>
       {/* Both views stay mounted so switching tabs keeps the open file and the
           tree expansion (only closing the whole panel resets them). */}

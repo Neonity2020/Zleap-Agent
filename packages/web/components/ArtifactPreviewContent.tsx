@@ -2,6 +2,7 @@
 
 import clsx from 'clsx';
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { artifactPreviewKind, truncateArtifactPreview } from '../lib/artifactPreview';
 import { webApiFetch } from '../lib/api';
 import { CodeView, langFromPath } from './CodeView';
@@ -34,7 +35,7 @@ export function ArtifactPreviewContent({
 
   if (kind === 'markdown') {
     return (
-      <div className={clsx('rounded-sm border border-border bg-background px-3 py-3', fullHeight && 'h-full soft-scroll overflow-y-auto', className)}>
+      <div className={clsx('w-full min-w-0 max-w-full overflow-x-auto rounded-sm border border-border bg-background px-3 py-3', fullHeight && 'h-full soft-scroll overflow-y-auto', className)}>
         <MarkdownView text={content} compact={compact} />
       </div>
     );
@@ -50,7 +51,7 @@ export function ArtifactPreviewContent({
 
   const preview = maxCodeLines ? truncateArtifactPreview(content, maxCodeLines) : { text: content, overflow: 0 };
   return (
-    <div className={className}>
+    <div className={clsx('w-full min-w-0 max-w-full', className)}>
       <CodeView code={preview.text} lang={langFromPath(path)} lineNumbers={codeLineNumbers} />
       {preview.overflow > 0 ? (
         <div className="px-1 pt-1.5 text-xs text-muted-foreground">... +{preview.overflow} more lines</div>
@@ -70,6 +71,7 @@ function HtmlArtifactPreview({
   className?: string;
   fullHeight?: boolean;
 }) {
+  const { t } = useTranslation();
   const [html, setHtml] = useState(content);
 
   useEffect(() => {
@@ -86,7 +88,7 @@ function HtmlArtifactPreview({
   return (
     <div className={clsx('overflow-hidden rounded-sm border border-border bg-white', fullHeight && 'h-full', className)}>
       <iframe
-        title={`预览 ${artifactName(path)}`}
+        title={t('preview.previewName', { defaultValue: '预览 {{name}}', name: artifactName(path) })}
         srcDoc={html}
         sandbox="allow-scripts"
         className={clsx('w-full bg-white', fullHeight ? 'h-full' : 'h-[520px]')}
@@ -104,6 +106,7 @@ function PptxArtifactPreview({
   className?: string;
   fullHeight?: boolean;
 }) {
+  const { t } = useTranslation();
   const frameRef = React.useRef<HTMLDivElement>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ready' } | { status: 'error'; message: string }>({ status: 'loading' });
@@ -193,10 +196,12 @@ function PptxArtifactPreview({
   return (
     <div ref={frameRef} className={frameClass} data-media-kind="pptx">
       {state.status === 'loading' ? (
-        <div className="flex min-h-[360px] items-center justify-center px-4 text-sm text-muted-foreground">正在加载 PPTX 预览...</div>
+        <div className="flex min-h-[360px] items-center justify-center px-4 text-sm text-muted-foreground">
+          {t('preview.loadingPptx', { defaultValue: '正在加载 PPTX 预览...' })}
+        </div>
       ) : null}
       {state.status === 'error' ? (
-        <div className="flex min-h-[360px] items-center justify-center px-4 text-sm text-rose-500">{state.message}</div>
+        <div className="flex min-h-[360px] items-center justify-center px-4 text-sm text-destructive">{state.message}</div>
       ) : null}
       <div ref={containerRef} data-pptx-preview className={clsx('w-full min-w-0', state.status === 'error' && 'hidden')} />
     </div>
@@ -378,6 +383,7 @@ function RawMediaPreview({
   className?: string;
   fullHeight?: boolean;
 }) {
+  const { t } = useTranslation();
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ready'; url: string } | { status: 'error'; message: string }>({ status: 'loading' });
 
   useEffect(() => {
@@ -402,10 +408,14 @@ function RawMediaPreview({
 
   const frameClass = clsx('flex items-center justify-center rounded-sm border border-border bg-background', fullHeight ? 'h-full' : 'min-h-[360px]', className);
   if (state.status === 'loading') {
-    return <div className={frameClass} data-media-kind={kind}>正在加载预览...</div>;
+    return (
+      <div className={frameClass} data-media-kind={kind}>
+        {t('preview.loading', { defaultValue: '正在加载预览...' })}
+      </div>
+    );
   }
   if (state.status === 'error') {
-    return <div className={clsx(frameClass, 'px-4 text-sm text-rose-500')} data-media-kind={kind}>{state.message}</div>;
+    return <div className={clsx(frameClass, 'px-4 text-sm text-destructive')} data-media-kind={kind}>{state.message}</div>;
   }
   if (kind === 'image') {
     return (
@@ -415,7 +425,7 @@ function RawMediaPreview({
     );
   }
   if (kind === 'pdf') {
-    return <iframe title={`预览 ${artifactName(path)}`} src={state.url} className={clsx('w-full rounded-sm border border-border bg-background', fullHeight ? 'h-full' : 'h-[720px]', className)} data-media-kind={kind} />;
+    return <iframe title={t('preview.previewName', { defaultValue: '预览 {{name}}', name: artifactName(path) })} src={state.url} className={clsx('w-full rounded-sm border border-border bg-background', fullHeight ? 'h-full' : 'h-[720px]', className)} data-media-kind={kind} />;
   }
   if (kind === 'video') {
     return <video src={state.url} controls className={clsx('w-full rounded-sm border border-border bg-black', fullHeight ? 'h-full' : 'max-h-[720px]', className)} data-media-kind={kind} />;

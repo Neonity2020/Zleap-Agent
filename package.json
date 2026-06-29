@@ -1,6 +1,6 @@
 {
   "name": "zleap-agent",
-  "version": "0.1.8",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.0",
@@ -46,10 +46,14 @@
     "link:cli": "pnpm build && pnpm --dir packages/cli link --global",
     "tasks:worker": "pnpm --filter @zleap/agent build && pnpm --filter @zleap/host build && node scripts/tasks-worker.mjs",
     "gateway:worker": "pnpm --filter @zleap/agent build && pnpm --filter @zleap/host build && node scripts/gateway.mjs",
-    "test": "pnpm -r --filter \"./packages/*\" test"
+    "test": "pnpm -r --filter \"./packages/*\" test",
+    "prepare": "husky || true"
   },
   "devDependencies": {
+    "@commitlint/cli": "^19.6.1",
+    "@commitlint/config-conventional": "^19.6.0",
     "@types/node": "^22.10.2",
+    "husky": "^9.1.7",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }

@@ -15,6 +15,7 @@ const failures = [];
 const warnings = [];
 
 checkDistribution();
+checkVersionConsistency();
 checkEnvExamples();
 checkPackageShape();
 checkPackageScripts();
@@ -143,6 +144,37 @@ function validateNodeSources(node, legacyNodeVersion) {
     if (!/^[a-f0-9]{64}$/i.test(source.sha256)) {
       failures.push(`runtime.node.sources.${platform}.sha256 must be a 64-character hex digest`);
     }
+  }
+}
+
+function checkVersionConsistency() {
+  // Two authoritative version files, bumped together by releaser-pleaser on the
+  // GitLab control plane: root package.json (packagejson updater) and
+  // Cargo.toml [package].version (generic `# x-releaser-pleaser-version` marker).
+  // tauri.conf.json intentionally has NO version field (it inherits from Cargo), and
+  // the CLI npm version is derived from root package.json at pack time, so neither is
+  // build-authoritative. This asserts the two real sources never drift.
+  const rootVersion = readJson('package.json').version;
+  if (!rootVersion) {
+    failures.push('package.json version is required');
+    return;
+  }
+  const cargoVersion = readText('packages/desktop/src-tauri/Cargo.toml')
+    .match(/\[package\][\s\S]*?\nversion\s*=\s*"([^"]*)"/u)?.[1];
+  if (cargoVersion !== rootVersion) {
+    failures.push(`Cargo.toml [package].version (${cargoVersion}) must match root package.json (${rootVersion}); releaser-pleaser bumps both — run pnpm sync:version locally`);
+  }
+  // tauri.conf.json must NOT pin a version (it would become a second source that
+  // drifts from Cargo). If one slips in, it must at least match.
+  const tauriVersion = JSON.parse(readText('packages/desktop/src-tauri/tauri.conf.json')).version;
+  if (tauriVersion !== undefined && tauriVersion !== rootVersion) {
+    failures.push(`tauri.conf.json should omit "version" (inherits from Cargo.toml); found ${tauriVersion} != ${rootVersion}`);
+  }
+  // CLI package.json version is cosmetic (published version comes from root); flag
+  // drift as a warning so `pnpm sync:version` can tidy it without blocking release.
+  const cliVersion = readJson('packages/cli/package.json').version;
+  if (cliVersion !== rootVersion) {
+    warnings.push(`packages/cli/package.json version (${cliVersion}) differs from root (${rootVersion}); cosmetic — run pnpm sync:version`);
   }
 }
 

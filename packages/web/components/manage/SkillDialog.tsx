@@ -7,7 +7,6 @@ import { useTranslation } from 'react-i18next';
 import { slugify } from '@/lib/utils';
 import { postJson } from '@/lib/api';
 import type { Resources } from '@/lib/useResources';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
@@ -15,7 +14,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ProjectFolderPicker } from './ProjectFolderPicker';
 import { ToolTreeSelect } from './ToolTreeSelect';
-import { ManageDialog, ManageField, ManageForm } from './manage-ui';
+import { ManageDialog, ManageDialogFooterActions, ManageField, ManageForm } from './manage-ui';
 
 type SkillDialogProps = {
   open: boolean;
@@ -156,14 +155,12 @@ export function SkillDialog({ open, onOpenChange, avatarId, resources, onSaved }
         description={t('skill.newDesc')}
         expandable
         footer={
-          <>
-            <Button variant="ghost" onClick={() => onOpenChange(false)}>
-              {t('common.cancel')}
-            </Button>
-            <Button onClick={submit} disabled={busy}>
-              {t('common.create')}
-            </Button>
-          </>
+          <ManageDialogFooterActions
+            onCancel={() => onOpenChange(false)}
+            onConfirm={submit}
+            confirmLabel={t('common.create')}
+            busy={busy}
+          />
         }
       >
         <Tabs

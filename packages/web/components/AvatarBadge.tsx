@@ -16,7 +16,7 @@ type AvatarBadgeProps = {
 /** Nav list + composer toolbar — keep glyph proportions identical. */
 export const NAV_AVATAR_BADGE_PROPS = {
   className: 'size-4',
-  letterClassName: 'text-[9px]',
+  letterClassName: 'text-2xs',
   emojiClassName: 'text-sm leading-none',
 } as const;
 

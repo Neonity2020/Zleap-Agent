@@ -20,6 +20,15 @@ import {
 import { cn } from '@/lib/utils';
 import { patchJson, postJson } from '@/lib/api';
 import { llmModels, modelDisplayLabel } from '@/lib/models';
+import {
+  buildTaskCron,
+  describeTaskCron,
+  inferTaskSchedule,
+  normalizeNumber,
+  parseTaskTime,
+  WEEKDAY_VALUES,
+  type TaskFrequency,
+} from '@/lib/taskSchedule';
 import type { Resources } from '@/lib/useResources';
 import type { Conversation as ManagedConversation } from '@/lib/useConversations';
 import { Button } from '@/components/ui/button';
@@ -54,13 +63,11 @@ export type TaskDialogItem = {
   targetSpace?: string;
 };
 
-type TaskFrequency = 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'hourly' | 'every15' | 'custom';
 type TaskPermissionMode = 'request_approval' | 'full_access';
 type TaskTargetMode = 'project' | 'conversation';
 
 const TASK_FREQUENCIES: TaskFrequency[] = ['daily', 'weekdays', 'weekly', 'monthly', 'hourly', 'every15', 'custom'];
 const TASK_PERMISSION_MODES: TaskPermissionMode[] = ['request_approval', 'full_access'];
-const WEEKDAY_VALUES = ['1', '2', '3', '4', '5', '6', '0'];
 const HOUR_VALUES = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0'));
 const MINUTE_QUARTER_VALUES = ['00', '15', '30', '45'];
 const DAY_OF_MONTH_VALUES = Array.from({ length: 31 }, (_, index) => String(index + 1));
@@ -131,7 +138,7 @@ export function TaskDialog({
   }, [open, projectId, task]);
 
   const cron = buildTaskCron({ frequency, time, weekday, dayOfMonth, customCron });
-  const [timeHour, timeMinute] = parseTime(time);
+  const [timeHour, timeMinute] = parseTaskTime(time);
   const hourValue = timeHour.padStart(2, '0');
   const minuteOptions = useMemo(
     () => [...new Set([timeMinute.padStart(2, '0'), ...MINUTE_QUARTER_VALUES])].sort((a, b) => Number(a) - Number(b)),
@@ -143,6 +150,7 @@ export function TaskDialog({
   const selectedConversation = selectedConversationId ? conversations.find((conversation) => conversation.id === selectedConversationId) : undefined;
   const selectedModel = selectedModelId ? modelOptions.find((model) => model.id === selectedModelId) : undefined;
   const sortedConversations = conversations.filter((conversation) => !conversation.archived).sort((a, b) => b.updatedAt - a.updatedAt);
+  const resolvedTitle = name.trim() || task?.name || selectedConversation?.title || 'Task';
   const scheduleLabel = cron ? describeTaskCron(cron, t) : t('task.invalidCron', { defaultValue: 'Cron 格式需要 5 段。' });
   const cronInvalid = !cron;
   const projectMissing = targetMode === 'project' && !selectedProjectId;
@@ -177,14 +185,13 @@ export function TaskDialog({
     }
     setBusy(true);
     try {
-      const title = name.trim() || task?.name || 'Task';
       const conversationId = selectedConversationId
         ?? task?.conversationId
-        ?? onCreateTaskConversation?.(title, targetMode === 'project' ? selectedProjectId : undefined);
+        ?? onCreateTaskConversation?.(resolvedTitle, targetMode === 'project' ? selectedProjectId : undefined);
       if (task) {
         await patchJson('/api/tasks', {
           id: task.id,
-          name: title,
+          name: resolvedTitle,
           cron,
           prompt: prompt.trim(),
           timezone: timezone.trim(),
@@ -197,7 +204,7 @@ export function TaskDialog({
         });
       } else {
         await postJson('/api/tasks', {
-          name: name.trim() || undefined,
+          name: resolvedTitle,
           cron,
           prompt: prompt.trim(),
           timezone: timezone.trim(),
@@ -224,7 +231,7 @@ export function TaskDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="gap-0 overflow-hidden rounded-2xl p-0 shadow-xl sm:max-w-[720px]"
+        className="gap-0 overflow-hidden p-0 sm:max-w-[720px]"
         onEscapeKeyDown={(event) => {
           if (busy) {
             event.preventDefault();
@@ -321,7 +328,7 @@ export function TaskDialog({
                 <DropdownMenuTrigger asChild>
                   <TaskDialogChip
                     icon={<MessageSquarePlus className="size-4" />}
-                    label={selectedConversation?.title ?? t('task.newConversation')}
+                    label={selectedConversation?.title ?? (name.trim() || task?.name || t('task.newConversation'))}
                   />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent {...footerMenuProps} className="min-w-56">
@@ -346,7 +353,7 @@ export function TaskDialog({
                 <TaskDialogChip icon={<Clock className="size-4" />} label={scheduleLabel} invalid={cronInvalid} />
               </PopoverTrigger>
               <PopoverContent side="top" align="start" className="w-72 p-3">
-                <ManageForm className="gap-3">
+                <ManageForm>
                   <ManageField label={t('task.frequency', { defaultValue: '频率' })}>
                     <Select value={frequency} onValueChange={(value) => setFrequency(value as TaskFrequency)}>
                       <SelectTrigger className="w-full bg-background">
@@ -579,69 +586,3 @@ function TaskDialogChip({
   );
 });
 TaskDialogChip.displayName = 'TaskDialogChip';
-
-export function buildTaskCron({
-  frequency,
-  time,
-  weekday,
-  dayOfMonth,
-  customCron,
-}: {
-  frequency: TaskFrequency;
-  time: string;
-  weekday: string;
-  dayOfMonth: string;
-  customCron: string;
-}): string {
-  if (frequency === 'custom') return normalizeCron(customCron);
-  if (frequency === 'hourly') return '0 * * * *';
-  if (frequency === 'every15') return '*/15 * * * *';
-  const [hour, minute] = parseTime(time);
-  if (frequency === 'daily') return `${minute} ${hour} * * *`;
-  if (frequency === 'weekdays') return `${minute} ${hour} * * 1-5`;
-  if (frequency === 'weekly') return `${minute} ${hour} * * ${normalizeNumber(weekday, 0, 6, 1)}`;
-  return `${minute} ${hour} ${normalizeNumber(dayOfMonth, 1, 31, 1)} * *`;
-}
-
-function normalizeCron(value: string): string {
-  const parts = value.trim().split(/\s+/).filter(Boolean);
-  return parts.length === 5 ? parts.join(' ') : '';
-}
-
-function parseTime(value: string): [string, string] {
-  const [rawHour = '9', rawMinute = '0'] = value.split(':');
-  const hour = normalizeNumber(rawHour, 0, 23, 9);
-  const minute = normalizeNumber(rawMinute, 0, 59, 0);
-  return [hour, minute];
-}
-
-function normalizeNumber(value: string, min: number, max: number, fallback: number): string {
-  const next = Number.parseInt(value, 10);
-  if (!Number.isFinite(next)) return String(fallback);
-  return String(Math.min(max, Math.max(min, next)));
-}
-
-function inferTaskSchedule(cron: string): { frequency: TaskFrequency; time: string; weekday: string; dayOfMonth: string } {
-  const [minute = '0', hour = '9', day = '*', month = '*', weekday = '*'] = cron.trim().split(/\s+/);
-  const time = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
-  if (cron === '0 * * * *') return { frequency: 'hourly', time: '09:00', weekday: '1', dayOfMonth: '1' };
-  if (cron === '*/15 * * * *') return { frequency: 'every15', time: '09:00', weekday: '1', dayOfMonth: '1' };
-  if (day === '*' && month === '*' && weekday === '*') return { frequency: 'daily', time, weekday: '1', dayOfMonth: '1' };
-  if (day === '*' && month === '*' && weekday === '1-5') return { frequency: 'weekdays', time, weekday: '1', dayOfMonth: '1' };
-  if (day === '*' && month === '*' && WEEKDAY_VALUES.includes(weekday)) return { frequency: 'weekly', time, weekday, dayOfMonth: '1' };
-  if (month === '*' && weekday === '*' && day !== '*') return { frequency: 'monthly', time, weekday: '1', dayOfMonth: day };
-  return { frequency: 'custom', time, weekday: '1', dayOfMonth: '1' };
-}
-
-export function describeTaskCron(cron: string, t: (key: string, options?: Record<string, unknown>) => string): string {
-  if (cron === '0 * * * *') return t('task.frequencyShort.hourly');
-  if (cron === '*/15 * * * *') return t('task.frequencyShort.every15');
-  const [minute, hour, day, month, weekday] = cron.trim().split(/\s+/);
-  if (!minute || !hour || !day || !month || !weekday) return cron;
-  const time = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
-  if (day === '*' && month === '*' && weekday === '*') return t('task.frequencyShort.daily', { time });
-  if (day === '*' && month === '*' && weekday === '1-5') return t('task.frequencyShort.weekdays', { time });
-  if (day === '*' && month === '*' && weekday !== '*') return t('task.frequencyShort.weekly', { time });
-  if (month === '*' && weekday === '*') return t('task.frequencyShort.monthly', { day, time });
-  return cron;
-}

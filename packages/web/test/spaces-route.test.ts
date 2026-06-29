@@ -42,6 +42,36 @@ describe('/api/spaces route actor contract', () => {
     expect(storeFromEnvMock).not.toHaveBeenCalled();
   });
 
+  it('lists the main space first even when the store returns work spaces first', async () => {
+    const testStore = makeStore();
+    const now = new Date('2026-01-01T00:00:00Z');
+    testStore.spaces.set('early-work', {
+      id: 'early-work',
+      slug: 'early-work',
+      kind: 'work',
+      currentVersion: 1,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    });
+    testStore.spaceVersions.set('early-work', [
+      {
+        spaceId: 'early-work',
+        version: 1,
+        label: 'Early Work',
+        createdAt: now,
+      },
+    ]);
+    storeFromEnvMock.mockResolvedValue(testStore.store as ZleapStore);
+
+    const response = await GET(actorRequest('/api/spaces', 'GET'));
+
+    await expectStatus(response, 200);
+    const json = (await response.json()) as { spaces: Array<{ canonicalId?: string; id?: string; kind?: string }> };
+    expect(json.spaces[0]).toMatchObject({ canonicalId: 'main', kind: 'main' });
+    expect(json.spaces.map((space) => space.canonicalId ?? space.id)).toContain('early-work');
+  });
+
   it('lets regular actors create owned spaces', async () => {
     const testStore = makeStore();
     storeFromEnvMock.mockResolvedValue(testStore.store as ZleapStore);

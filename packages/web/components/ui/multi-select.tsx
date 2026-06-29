@@ -86,7 +86,7 @@ export function MultiSelect({
       {selected.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
           {selected.map((value) => (
-            <Badge key={value} variant="secondary" className="h-6 gap-1 px-2.5 pr-1.5 text-[13px] font-normal">
+            <Badge key={value} variant="secondary" className="h-6 gap-1 px-2.5 pr-1.5 text-xs font-normal">
               {byValue.get(value)?.label ?? value}
               <button
                 type="button"

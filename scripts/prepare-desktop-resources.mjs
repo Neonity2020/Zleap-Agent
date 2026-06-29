@@ -1,10 +1,18 @@
 #!/usr/bin/env node
 /**
- * Prepare slim desktop app resources: a bootstrap bundle (Node + host bootstrap scripts)
- * plus a thin payload descriptor (manifest + download.json) for first-launch fetch.
+ * Prepare desktop app resources in one of two modes:
  *
- * Bootstrap intentionally deploys only @zleap/host (not the full @zleap/runtime tree)
- * so third-party Mach-O such as @larksuite/cli are not embedded in the .app bundle.
+ *   --mode slim (default): a bootstrap bundle (Node + host bootstrap scripts) plus a
+ *     thin payload descriptor (manifest + download.json) for first-launch fetch.
+ *     Bootstrap intentionally deploys only @zleap/host (not the full @zleap/runtime
+ *     tree) so third-party Mach-O such as @larksuite/cli are not embedded in the .app.
+ *
+ *   --mode fat: embed the FULL payload (app/node/postgres tar.gz) under resources/payload
+ *     so the installer is completely self-contained — first launch only extracts locally
+ *     and never downloads anything. No bootstrap.tar.gz / download.json is emitted (no
+ *     download URL ⇒ hard guarantee of offline self-containment). The Rust loader detects
+ *     resources/payload/app.tar.gz and automatically takes the local-seed path
+ *     (ZLEAP_DESKTOP_DOWNLOAD=0).
  */
 import { cp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -17,11 +25,20 @@ import { archiveTarGz, sha256File } from './lib/archive.mjs';
 
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const cliArgs = process.argv.slice(2);
+
+const modeArgIndex = cliArgs.indexOf('--mode');
+const mode = modeArgIndex >= 0 ? cliArgs[modeArgIndex + 1] : 'slim';
+if (mode !== 'slim' && mode !== 'fat') {
+  throw new Error(`Unknown --mode "${mode}" (expected "slim" or "fat")`);
+}
+
+const outArgIndex = cliArgs.indexOf('--out');
+// A value consumed by a flag (--out/--mode) must not be mistaken for the platform positional.
+const flagValueIndexes = new Set([outArgIndex + 1, modeArgIndex + 1].filter((index) => index > 0));
 const platform =
   cliArgs.find((arg) => OFFICIAL_PLATFORMS.includes(arg)) ??
-  cliArgs.find((arg) => !arg.startsWith('-') && arg !== '--out' && cliArgs[cliArgs.indexOf(arg) - 1] !== '--out') ??
+  cliArgs.find((arg, index) => !arg.startsWith('-') && !flagValueIndexes.has(index)) ??
   platformTag();
-const outArgIndex = cliArgs.indexOf('--out');
 const outDir = outArgIndex >= 0 ? cliArgs[outArgIndex + 1] : join(REPO_ROOT, 'packages', 'desktop', 'src-tauri', 'resources');
 
 const payloadSource = join(REPO_ROOT, 'dist', 'payload', platform, 'payload');
@@ -38,6 +55,22 @@ const HOST_BOOTSTRAP_PATHS = [
 
 if (!existsSync(join(payloadSource, 'manifest.json'))) {
   throw new Error(`Payload missing for ${platform}: ${payloadSource}\nRun: pnpm package:release`);
+}
+
+if (mode === 'fat') {
+  // Self-contained installer: embed the full payload verbatim under resources/payload.
+  // The Rust loader (resolve_bundled_seed_dir / resolve_bundled_payload_dir) looks for
+  // resources/payload/{app,node,postgres}.tar.gz + manifest.json and seeds locally with
+  // ZLEAP_DESKTOP_DOWNLOAD=0. No download.json is written, so there is no fetch URL at all.
+  await resetDir(outDir);
+  await mkdir(outDir, { recursive: true });
+  await cp(payloadSource, join(outDir, 'payload'), { recursive: true, verbatimSymlinks: true });
+  const fatManifest = JSON.parse(readFileSync(join(payloadSource, 'manifest.json'), 'utf8'));
+  process.stdout.write(
+    `Prepared fat (self-contained) desktop resources for ${platform} at ${outDir}\n` +
+      `  payload/ embedded (app/node/postgres.tar.gz, v${fatManifest.version ?? version}) — first launch is offline\n`,
+  );
+  process.exit(0);
 }
 
 const manifest = JSON.parse(readFileSync(join(payloadSource, 'manifest.json'), 'utf8'));

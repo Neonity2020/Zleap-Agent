@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { webApiFetch } from '../lib/api';
+import { fetchModels } from '@/lib/services';
 import { isConfiguredLlmModel } from '../lib/models';
 import { clearOnboardingSkipped, hasSkippedOnboarding } from '../lib/onboarding';
 
@@ -16,21 +16,13 @@ export function OnboardingRedirect() {
         return;
       }
       try {
-        const res = await webApiFetch('/api/models');
-        if (!res.ok) {
-          return;
-        }
-        const data = (await res.json()) as {
-          models?: Array<{ config?: { hasApiKey?: boolean }; model?: string; purpose?: string }>;
-        };
-        const configured = data.models?.some(isConfiguredLlmModel);
+        const models = await fetchModels();
+        const configured = models.some(isConfiguredLlmModel);
         if (configured) {
           clearOnboardingSkipped();
           return;
         }
-        if (!configured) {
-          router.replace('/onboarding');
-        }
+        router.replace('/onboarding');
       } catch {
         // ignore — main UI still usable offline / during bootstrap
       }

@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
+import { type ComponentProps, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, Maximize, Minimize, Search, X } from 'lucide-react';
+import { ArrowLeft, Loader2, Maximize, Minimize, Plus, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useExpandable } from '@/hooks/useExpandable';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,7 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -96,7 +97,7 @@ export function ManageSearchBar({
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           size="sm"
-          className="h-8 text-[13px] placeholder:text-muted-foreground/70"
+          className="h-8 text-xs placeholder:text-muted-foreground/70"
         />
         {value ? (
           <InputGroupAddon align="inline-end" className="pr-1">
@@ -117,13 +118,29 @@ export function ManageSearchBar({
   );
 }
 
+export function ManageAddButton({
+  label,
+  onClick,
+  disabled = false,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Button size="icon-lg" onClick={onClick} disabled={disabled} title={label} aria-label={label}>
+      <Plus className="size-4" />
+    </Button>
+  );
+}
+
 export function ManageSectionLabel({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cn('mb-3 mt-6 text-sm font-semibold text-foreground first:mt-0', className)}>{children}</div>;
 }
 
 export function ManageEmptyState({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-dashed border-border py-14 text-center text-[13px] text-muted-foreground">
+    <div className="rounded-lg border border-dashed border-border py-14 text-center text-xs text-muted-foreground">
       {icon ? <div className="mx-auto mb-3 flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground">{icon}</div> : null}
       {children}
     </div>
@@ -186,10 +203,11 @@ export function ManageListRow({
         }
       }}
       className={cn(
-        'group relative flex h-9 items-center gap-2.5 rounded-lg border border-transparent px-2.5 text-[13px] transition-colors',
+        'group relative flex h-9 items-center gap-2.5 rounded-lg border border-transparent px-2.5 text-xs transition-colors',
         interactive && 'cursor-pointer text-left',
         (interactive || hasActions) && 'hover:bg-muted/70 focus-within:bg-muted/70',
-        active && 'bg-muted/70',
+        interactive && 'outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset',
+        active && 'bg-muted/70 before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-primary',
         disabled && 'opacity-55',
         className,
       )}
@@ -227,14 +245,17 @@ export function ManageListRow({
 export function ManageStatusBadge({
   children,
   variant = 'secondary',
+  size = 'default',
   className,
 }: {
   children: ReactNode;
   variant?: BadgeVariant;
+  /** `sm` (h-4) for dense list rows, `default` (h-5) for panels/headers. */
+  size?: 'sm' | 'default';
   className?: string;
 }) {
   return (
-    <Badge variant={variant} className={cn('h-5 px-1.5 text-[10px] font-normal', className)}>
+    <Badge variant={variant} className={cn('px-1.5 text-2xs font-normal', size === 'sm' ? 'h-4' : 'h-5', className)}>
       {children}
     </Badge>
   );
@@ -266,17 +287,13 @@ export function ManageDialog({
   contentClassName?: string;
 }) {
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(defaultExpanded);
-
-  useEffect(() => {
-    if (open) setExpanded(defaultExpanded);
-  }, [defaultExpanded, open]);
+  const { expanded, toggle } = useExpandable(open, defaultExpanded);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          'grid max-h-[min(640px,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-md',
+          'grid max-h-[min(640px,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-[560px]',
           size === 'editor' && 'max-h-[min(720px,calc(100vh-2rem))] sm:max-w-[720px]',
           expanded && 'h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] sm:max-w-[min(1120px,calc(100vw-2rem))]',
           contentClassName,
@@ -287,7 +304,7 @@ export function ManageDialog({
             variant="ghost"
             size="icon-sm"
             className="absolute right-9 top-2"
-            onClick={() => setExpanded((value) => !value)}
+            onClick={toggle}
             title={expanded ? t('common.collapse', { defaultValue: '还原' }) : t('common.expand', { defaultValue: '放大' })}
             aria-label={expanded ? t('common.collapse', { defaultValue: '还原' }) : t('common.expand', { defaultValue: '放大' })}
           >
@@ -330,6 +347,7 @@ export function ManageDialogFooterActions({
         {cancelLabel ?? t('common.cancel')}
       </Button>
       <Button onClick={onConfirm} disabled={busy || confirmDisabled}>
+        {busy ? <Loader2 className="animate-spin" /> : null}
         {confirmLabel ?? t('common.save', { defaultValue: '保存' })}
       </Button>
     </>
@@ -346,6 +364,8 @@ export function ManageDrawer({
   children,
   footer,
   width = 'default',
+  expandable = true,
+  defaultExpanded = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -356,29 +376,45 @@ export function ManageDrawer({
   children: ReactNode;
   footer?: ReactNode;
   width?: 'narrow' | 'default' | 'wide';
+  expandable?: boolean;
+  defaultExpanded?: boolean;
 }) {
+  const { t } = useTranslation();
+  const { expanded, toggle } = useExpandable(open, defaultExpanded);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
         className={cn(
-          'fixed inset-y-0 right-0 left-auto top-0 grid h-svh max-h-none max-w-none translate-x-0 translate-y-0 gap-0 rounded-none rounded-l-xl p-0 sm:max-w-none',
+          'fixed inset-y-0 right-0 left-auto top-0 grid grid-cols-1 h-svh max-h-none min-w-0 max-w-none translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-none rounded-l-xl p-0 sm:max-w-none',
           footer ? 'grid-rows-[auto_minmax(0,1fr)_auto]' : 'grid-rows-[auto_minmax(0,1fr)]',
-          width === 'narrow' && 'w-[min(420px,calc(100vw-1rem))]',
-          width === 'default' && 'w-[min(520px,calc(100vw-1rem))]',
-          width === 'wide' && 'w-[min(560px,calc(100vw-1rem))]',
+          !expanded && width === 'narrow' && 'w-[min(420px,calc(100vw-1rem))]',
+          !expanded && width === 'default' && 'w-[min(520px,calc(100vw-1rem))]',
+          !expanded && width === 'wide' && 'w-[min(560px,calc(100vw-1rem))]',
+          expanded && 'w-[min(960px,calc(100vw-1rem))]',
         )}
       >
         <DialogHeader className="border-b border-border px-4 py-3">
           <div className="flex min-w-0 items-start gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-2">
-                <DialogTitle className="truncate">{title}</DialogTitle>
+                <DialogTitle className="min-w-0 flex-1 truncate">{title}</DialogTitle>
                 {badge}
               </div>
               {subtitle ? <DialogDescription className="mt-1 truncate">{subtitle}</DialogDescription> : null}
             </div>
             {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
+            {expandable ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={toggle}
+                title={expanded ? t('common.collapse', { defaultValue: '还原' }) : t('common.expand', { defaultValue: '放大' })}
+                aria-label={expanded ? t('common.collapse', { defaultValue: '还原' }) : t('common.expand', { defaultValue: '放大' })}
+              >
+                {expanded ? <Minimize /> : <Maximize />}
+              </Button>
+            ) : null}
             <DialogClose asChild>
               <Button variant="ghost" size="icon-sm" aria-label="Close">
                 <X />
@@ -386,9 +422,9 @@ export function ManageDrawer({
             </DialogClose>
           </div>
         </DialogHeader>
-        <ScrollArea className="min-h-0 overflow-hidden">
-          <div className="flex flex-col gap-5 p-4">{children}</div>
-        </ScrollArea>
+        <div className="soft-scroll min-h-0 min-w-0 overflow-y-auto overflow-x-hidden">
+          <div className="flex w-full min-w-0 max-w-full flex-col gap-5 p-4">{children}</div>
+        </div>
         {footer ? <DialogFooter className="m-0 shrink-0 rounded-none border-t bg-muted/50 px-4 py-3">{footer}</DialogFooter> : null}
       </DialogContent>
     </Dialog>
@@ -403,31 +439,46 @@ export function ManageField({
   label,
   htmlFor,
   description,
+  error,
+  required = false,
   children,
   className,
 }: {
   label: ReactNode;
   htmlFor?: string;
   description?: ReactNode;
+  /** Inline validation message; when set the field renders in the invalid (destructive) state. */
+  error?: ReactNode;
+  /** Appends a required marker after the label. */
+  required?: boolean;
   children: ReactNode;
   className?: string;
 }) {
+  const invalid = Boolean(error);
   return (
-    <Field className={className}>
-      <FieldLabel htmlFor={htmlFor}>{label}</FieldLabel>
+    <Field className={className} data-invalid={invalid || undefined}>
+      <FieldLabel htmlFor={htmlFor}>
+        {label}
+        {required ? (
+          <span aria-hidden className="text-destructive">
+            *
+          </span>
+        ) : null}
+      </FieldLabel>
       {children}
       {description ? <FieldDescription>{description}</FieldDescription> : null}
+      {invalid ? <FieldError>{error}</FieldError> : null}
     </Field>
   );
 }
 
 export function ManageDetailGrid({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('grid grid-cols-2 gap-2', className)}>{children}</div>;
+  return <div className={cn('grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2', className)}>{children}</div>;
 }
 
 export function ManageDetailItem({ label, value }: { label: ReactNode; value: ReactNode }) {
   return (
-    <div className="rounded-lg bg-muted/40 p-3">
+    <div className="min-w-0 rounded-lg bg-muted/40 p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 break-words text-sm text-foreground">{value || '-'}</div>
     </div>
@@ -435,7 +486,7 @@ export function ManageDetailItem({ label, value }: { label: ReactNode; value: Re
 }
 
 export function ManagePreviewBlock({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('rounded-lg bg-muted/35 p-3 text-sm leading-relaxed text-foreground', className)}>{children}</div>;
+  return <div className={cn('min-w-0 break-words rounded-lg bg-muted/35 p-3 text-sm leading-relaxed text-foreground', className)}>{children}</div>;
 }
 
 export function ManageSeparator({ className }: { className?: string }) {

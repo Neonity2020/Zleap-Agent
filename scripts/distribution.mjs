@@ -206,7 +206,11 @@ export function syncVersion() {
   if (dist.desktop?.identifier) {
     tauriConf.identifier = dist.desktop.identifier;
   }
-  tauriConf.version = version;
+  // tauri.conf.json deliberately has NO version field: Tauri inherits the desktop
+  // version from Cargo.toml [package].version, which releaser-pleaser bumps on the
+  // GitLab control plane. Keeping a version here too would be a second source that
+  // can drift, so we actively strip it.
+  delete tauriConf.version;
   tauriConf.bundle ??= {};
   tauriConf.bundle.createUpdaterArtifacts = true;
   tauriConf.plugins ??= {};
@@ -223,6 +227,33 @@ export function syncVersion() {
     cliPkg.version = version;
     writeFileSync(cliPkgPath, `${JSON.stringify(cliPkg, null, 2)}\n`);
     process.stdout.write(`Synced version ${version} → packages/cli/package.json\n`);
+  }
+
+  syncCargoVersion(version);
+}
+
+// Cargo.toml [package].version is the authoritative desktop version: it feeds both
+// `env!("CARGO_PKG_VERSION")` (the macOS "About" box) and — because tauri.conf.json
+// has no version field — the Tauri bundle/updater version. releaser-pleaser bumps it
+// via the `# x-releaser-pleaser-version` marker; this keeps local `sync:version` in
+// lockstep. A scoped regex on the [package] table avoids a TOML parser dependency.
+export function syncCargoVersion(version = readReleaseVersion()) {
+  const cargoPath = join(REPO_ROOT, 'packages/desktop/src-tauri/Cargo.toml');
+  if (!existsSync(cargoPath)) {
+    return;
+  }
+  const original = readFileSync(cargoPath, 'utf8');
+  let replaced = false;
+  const next = original.replace(/(\[package\][\s\S]*?\n)(version\s*=\s*")([^"]*)(")/u, (match, head, pre, current, post) => {
+    if (current === version) {
+      return match;
+    }
+    replaced = true;
+    return `${head}${pre}${version}${post}`;
+  });
+  if (replaced) {
+    writeFileSync(cargoPath, next);
+    process.stdout.write(`Synced version ${version} → packages/desktop/src-tauri/Cargo.toml\n`);
   }
 }
 

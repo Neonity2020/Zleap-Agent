@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
+import { SPRING_PANEL } from "@/lib/motion";
 import { Menu, PanelRight, PanelRightOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { Composer, type GoalComposerState } from '../components/Composer';
@@ -16,10 +17,11 @@ import { WorkspaceFilesDrawer } from '../components/WorkspaceFilesDrawer';
 import { CollapsedPill } from '../components/console/CollapsedPill';
 import { WorkspacePanel } from '../components/console/WorkspacePanel';
 import { OnboardingRedirect } from '../components/OnboardingRedirect';
+import { ProjectDialog } from '../components/manage/ProjectDialog';
 import { deleteJson, webApiFetch } from '../lib/api';
 import { mockEngine } from '../lib/engine';
 import { sseEngine } from '../lib/sseEngine';
-import { dropAllConversationRuntimes, dropConversationRuntime, getConversationRuntime, newConversationId, useConversation } from '../lib/conversationRuntime';
+import { dropAllConversationRuntimes, dropConversationRuntime, getConversationRuntime, newConversationId, useConversation, useRunningConversationIds } from '../lib/conversationRuntime';
 import { defaultModelId, llmModels } from '../lib/models';
 import { useConversations } from '../lib/useConversations';
 import { useResources } from '../lib/useResources';
@@ -137,8 +139,10 @@ export default function Page() {
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [spacesRefreshKey, setSpacesRefreshKey] = useState(0);
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const spaces = useSpaces(spacesRefreshKey, activeAvatarId);
   const resources = useResources(activeAvatarId);
+  const runningConversationIds = useRunningConversationIds();
   const conversations = useConversations('zleap-default');
   const activeConv = conversations.conversations.find((conversation) => conversation.id === activeConvId);
   const activeComposerDraftId = composerDraftIdForConversation(activeConvId, Boolean(activeConv));
@@ -464,12 +468,16 @@ export default function Page() {
       conversations.touch(activeConvId, text);
       void ensureActiveServerConversation(text)
         .then(() => wb.send(text, sendOptions))
-        .catch(() => undefined);
+        .catch((error) => {
+          // A failure here (e.g. /api/chat/conversation rejecting) means wb.send
+          // never runs, so the view silently stays on home. Surface it instead.
+          toast.error(error instanceof Error ? error.message : t('chat.sendFailed', { defaultValue: '发送失败，请重试' }));
+        });
     },
     [wb, conversations, activeConvId, conversationContext, composerRunMode, composerSkillId, resources.skills, ensureActiveServerConversation],
   );
 
-  // Persist the active conversation's full state (transcript + 调度台 panes) for
+  // Persist the active conversation's full state (transcript + workspace-console panes) for
   // reload survival. Background switch survival is handled by the runtime
   // registry — switching away never aborts the stream.
   const { saveSnapshot } = conversations;
@@ -642,8 +650,10 @@ export default function Page() {
         conversations.saveSnapshot(activeConvId, { messages: nextMessages, workspaces: wb.workspaces });
       }
       setHistoryHasMore(page.hasMore && page.messages.length > 0);
-    } catch {
-      // Keep the current page intact. The user can scroll/click again to retry.
+    } catch (error) {
+      // Keep the current page intact, but surface the failure so the click/scroll
+      // doesn't appear to silently do nothing — the user can retry.
+      toast.error(error instanceof Error ? error.message : t('chat.loadEarlierFailed', { defaultValue: '加载更早消息失败' }));
     } finally {
       setHistoryLoading(false);
     }
@@ -687,6 +697,30 @@ export default function Page() {
       }
     },
     [conversations, activeConvId, resetWorkspaceFilesPanel, t],
+  );
+
+  const handleArchiveConversation = useCallback(
+    (id: string) => {
+      conversations.archive(id);
+      if (id === activeConvId) {
+        resetWorkspaceFilesPanel();
+        setActiveConvId(newConversationId());
+        setHistoryHasMore(false);
+        setHistoryLoading(false);
+        setComposerRunMode('normal');
+        setComposerSkillId(undefined);
+        setConsoleActivated(false);
+        setView('chat');
+      }
+    },
+    [conversations, activeConvId, resetWorkspaceFilesPanel],
+  );
+
+  const handleUnarchiveConversation = useCallback(
+    (id: string) => {
+      conversations.unarchive(id);
+    },
+    [conversations],
   );
 
   const handleAvatarSelected = useCallback((avatarId: string) => {
@@ -764,6 +798,13 @@ export default function Page() {
     [activeConvId, conversations, resetWorkspaceFilesPanel, resources],
   );
 
+  const handleProjectDialogSaved = useCallback(
+    (project: { id: string; name: string }) => {
+      handleProjectCreated(project.id);
+    },
+    [handleProjectCreated],
+  );
+
   const handleClearRecords = useCallback(async () => {
     const result = (await deleteJson('/api/conversations/clear')) as {
       removedCount?: number;
@@ -791,16 +832,8 @@ export default function Page() {
     return result;
   }, [conversations, resetWorkspaceFilesPanel, resources]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        handleNewChat();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleNewChat]);
+  // 仅保留 ⌘K（搜索面板，在 Sidebar 内绑定）。⌘N / ⌘, / ⌘1-9 等与浏览器系统级快捷键冲突，
+  // web 端 preventDefault 无法可靠拦截，故不绑定、也不在 UI 上提示。
 
   const activePageKey = view !== 'chat' && view !== 'settings' ? view : null;
   const ActivePage = activePageKey ? RESOURCE_PAGES[activePageKey] : null;
@@ -903,7 +936,7 @@ export default function Page() {
   );
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-bg text-ink">
+    <div className="flex h-dvh overflow-hidden bg-bg text-foreground">
       <OnboardingRedirect />
       <div className="hidden h-full md:block">
         <Sidebar
@@ -919,10 +952,15 @@ export default function Page() {
           onNewProjectChat={handleNewProjectChat}
           onOpenSettings={handleOpenSettings}
           conversations={conversations.conversations}
+          archivedConversations={conversations.archivedConversations}
           activeConversationId={activeConvId}
+          runningConversationIds={runningConversationIds}
           onSelectConversation={handleSelectConversation}
           onDeleteConversation={handleDeleteConversation}
+          onArchiveConversation={handleArchiveConversation}
+          onUnarchiveConversation={handleUnarchiveConversation}
           onRenameConversation={conversations.rename}
+          onCreateProject={() => setProjectDialogOpen(true)}
           onResourcesChanged={() => setSpacesRefreshKey((value) => value + 1)}
           onEntityDeleted={(kind, id) => {
             if (editing?.kind === kind && editing.id === id) handleEditBack();
@@ -944,8 +982,8 @@ export default function Page() {
               initial={{ x: -280 }}
               animate={{ x: 0 }}
               exit={{ x: -280 }}
-              transition={{ type: 'spring', stiffness: 320, damping: 34 }}
-              className="absolute inset-y-0 left-0 w-72 overflow-hidden border-r border-border bg-surface shadow-lg"
+              transition={SPRING_PANEL}
+              className="absolute inset-y-0 left-0 w-72 overflow-hidden border-r border-border bg-card shadow-lg"
             >
               <Sidebar
                 model={MODEL_LABEL}
@@ -960,10 +998,15 @@ export default function Page() {
                 onNewProjectChat={handleNewProjectChat}
                 onOpenSettings={handleOpenSettings}
                 conversations={conversations.conversations}
+                archivedConversations={conversations.archivedConversations}
                 activeConversationId={activeConvId}
+                runningConversationIds={runningConversationIds}
                 onSelectConversation={handleSelectConversation}
                 onDeleteConversation={handleDeleteConversation}
+                onArchiveConversation={handleArchiveConversation}
+                onUnarchiveConversation={handleUnarchiveConversation}
                 onRenameConversation={conversations.rename}
+                onCreateProject={() => setProjectDialogOpen(true)}
                 onResourcesChanged={() => setSpacesRefreshKey((value) => value + 1)}
                 onEntityDeleted={(kind, id) => {
                   if (editing?.kind === kind && editing.id === id) handleEditBack();
@@ -977,21 +1020,21 @@ export default function Page() {
 
       <div className="flex min-w-0 flex-1">
         <main className="relative flex min-w-0 flex-1 flex-col">
-          <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-surface/85 px-3 backdrop-blur-sm md:hidden">
+          <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-card/85 px-3 backdrop-blur-sm md:hidden">
             <button
               type="button"
               onClick={() => setMobileSidebarOpen(true)}
-              className="flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-surface-2 hover:text-ink"
+              className="flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
               aria-label={t('common.openSidebar')}
               title={t('common.openSidebar')}
             >
               <Menu className="h-4 w-4" />
             </button>
-            <span className="text-sm font-semibold text-ink">Zleap</span>
+            <span className="text-sm font-semibold text-foreground">Zleap</span>
             <button
               type="button"
               onClick={openWorkspaceFiles}
-              className="ml-auto flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-surface-2 hover:text-ink"
+              className="ml-auto flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
               aria-label={t('workspace.open')}
               title={t('workspace.open')}
             >
@@ -1004,7 +1047,7 @@ export default function Page() {
                   setWorkspaceFilesOpen(false);
                   setCollapsed((value) => !value);
                 }}
-                className="flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-surface-2 hover:text-ink"
+                className="flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
                 aria-label={t('common.toggleConsole')}
                 title={t('common.toggleConsole')}
               >
@@ -1041,13 +1084,14 @@ export default function Page() {
                 conversations={conversations.conversations}
                 onCreateTaskConversation={createTaskConversation}
                 onOpenTaskConversation={openTaskConversation}
+                onEdit={handleEdit}
                 onChanged={refreshResources}
                 onBack={() => setView(resourceBackView)}
               />
             </div>
           ) : isHome ? (
             <div className="flex flex-1 flex-col items-center justify-center px-4 pb-8">
-              <div className="w-full max-w-3xl">
+              <div className="animate-msg-in w-full max-w-3xl">
                 <Wordmark className="mb-8" />
                 <Composer
                   status={wb.status}
@@ -1075,6 +1119,7 @@ export default function Page() {
                   onAgentChange={handleAgentChange}
                   onProjectChange={handleProjectChange}
                   onProjectCreated={handleProjectCreated}
+                  onCreateProject={() => setProjectDialogOpen(true)}
                   onModelChange={setSelectedModelId}
                   onPermissionModeChange={setPermissionMode}
                   onRunModeChange={handleComposerRunModeChange}
@@ -1166,6 +1211,7 @@ export default function Page() {
                 onAgentChange={handleAgentChange}
                 onProjectChange={handleProjectChange}
                 onProjectCreated={handleProjectCreated}
+                onCreateProject={() => setProjectDialogOpen(true)}
                 onModelChange={setSelectedModelId}
                 onPermissionModeChange={setPermissionMode}
                 onRunModeChange={handleComposerRunModeChange}
@@ -1188,7 +1234,7 @@ export default function Page() {
                 initial={{ width: 0, opacity: 0 }}
                 animate={{ width: workspaceDrawerWidth, opacity: 1 }}
                 exit={{ width: 0, opacity: 0 }}
-                transition={{ type: 'spring', stiffness: 260, damping: 32 }}
+                transition={SPRING_PANEL}
                 style={{ minWidth: 0 }}
                 className="hidden shrink-0 overflow-hidden lg:block"
               >
@@ -1217,7 +1263,7 @@ export default function Page() {
                   initial={{ x: '100%' }}
                   animate={{ x: 0 }}
                   exit={{ x: '100%' }}
-                  transition={{ type: 'spring', stiffness: 280, damping: 32 }}
+                  transition={SPRING_PANEL}
                   className="absolute inset-y-0 right-0 w-full max-w-md overflow-hidden border-l border-border bg-background shadow-lg"
                 >
                   {workspacePanelEl('overlay')}
@@ -1232,13 +1278,14 @@ export default function Page() {
         <button
           type="button"
           onClick={openWorkspaceFiles}
-          className="fixed right-2.5 top-1 z-50 hidden h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-ink md:flex"
+          className="fixed right-2.5 top-1 z-50 hidden h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground md:flex"
           aria-label={t('workspace.expand')}
           title={t('workspace.expand')}
         >
           <PanelRight className="h-4 w-4" />
         </button>
       ) : null}
+      <ProjectDialog open={projectDialogOpen} onOpenChange={setProjectDialogOpen} onSaved={handleProjectDialogSaved} />
     </div>
   );
 }

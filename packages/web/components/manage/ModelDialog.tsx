@@ -7,10 +7,9 @@ import { slugify } from '@/lib/utils';
 import { postJson, patchJson } from '@/lib/api';
 import type { ModelConfigView } from '@/lib/useResources';
 import { modelKind, type ModelKind } from '@/lib/models';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ManageDialog, ManageField, ManageForm, ManagePreviewBlock } from './manage-ui';
+import { ManageDialog, ManageDialogFooterActions, ManageField, ManageForm, ManagePreviewBlock } from './manage-ui';
 
 type ModelDialogProps = {
   open: boolean;
@@ -126,17 +125,16 @@ export function ModelDialog({ open, onOpenChange, avatarId, editTarget, onSaved 
     <ManageDialog
       open={open}
       onOpenChange={onOpenChange}
+      expandable
       title={editing ? t('model.edit', { defaultValue: 'Edit Model' }) : t('model.new')}
       description={t('model.newDesc')}
       footer={
-        <>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            {t('common.cancel')}
-          </Button>
-          <Button onClick={submit} disabled={busy}>
-            {editing ? t('common.saveChanges') : t('common.create')}
-          </Button>
-        </>
+        <ManageDialogFooterActions
+          onCancel={() => onOpenChange(false)}
+          onConfirm={submit}
+          confirmLabel={editing ? t('common.saveChanges') : t('common.create')}
+          busy={busy}
+        />
       }
     >
       <ManageForm>

@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { ArtifactView, DisplayMessage, RunStatus, ToolCallView, WorkPane } from '../lib/types';
 import type { SpaceItem } from '../lib/spaces';
 import type { WorkspaceFileTarget } from '../lib/workspaceFiles';
@@ -43,6 +45,7 @@ export function Conversation({
   onDeleteMessage,
   onResendMessage,
 }: ConversationProps) {
+  const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const restoreScrollRef = useRef<{ height: number; top: number } | null>(null);
@@ -126,7 +129,7 @@ export function Conversation({
 
   return (
     <div ref={scrollRef} onScroll={onScroll} className="no-scrollbar flex-1 overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
         {hasOlderMessages ? (
           <button
             type="button"
@@ -137,9 +140,16 @@ export function Conversation({
               onLoadOlderMessages?.();
             }}
             disabled={loadingOlderMessages}
-            className="mx-auto rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground shadow-xs transition hover:bg-muted hover:text-foreground"
+            className="mx-auto inline-flex items-center justify-center gap-1.5 rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground shadow-xs transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-70"
           >
-            {loadingOlderMessages ? '加载中...' : '加载更早消息'}
+            {loadingOlderMessages ? (
+              <>
+                <Loader2 className="size-3 animate-spin" />
+                {t('common.loading', { defaultValue: '加载中…' })}
+              </>
+            ) : (
+              t('chat.loadEarlier', { defaultValue: '加载更早消息' })
+            )}
           </button>
         ) : null}
         {displayMessages

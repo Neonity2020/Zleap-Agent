@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { Check, ChevronDown, Loader2, X } from 'lucide-react';
 import { isDiffResult } from '../../lib/diff';
@@ -32,9 +33,9 @@ function StatusIcon({ status }: { status: ToolCallView['status'] }) {
     return <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />;
   }
   if (status === 'error') {
-    return <X className="h-3.5 w-3.5 text-rose-500" />;
+    return <X className="h-3.5 w-3.5 text-destructive" />;
   }
-  return <Check className="h-3.5 w-3.5 text-emerald-500" />;
+  return <Check className="h-3.5 w-3.5 text-success" />;
 }
 
 /**
@@ -50,6 +51,7 @@ export function WorkScreenTool({
   defaultOpen?: boolean;
   onOpenChange?: () => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen);
 
   useEffect(() => {
@@ -76,8 +78,8 @@ export function WorkScreenTool({
   return (
     <div
       className={clsx(
-        'animate-msg-in overflow-hidden rounded-md border bg-surface transition-colors',
-        prominent ? 'border-border-strong shadow-xs' : 'border-border shadow-none hover:border-border-strong',
+        'animate-msg-in overflow-hidden rounded-md border bg-card transition-colors',
+        prominent ? 'border-border shadow-xs' : 'border-border shadow-none hover:border-border',
       )}
     >
       <button
@@ -88,13 +90,13 @@ export function WorkScreenTool({
           onOpenChange?.();
         }}
         className={clsx(
-          'flex w-full items-center gap-2 px-3 py-2 text-left',
-          prominent ? 'bg-surface' : 'bg-console-screen/40',
+          'flex w-full items-center gap-2 px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50',
+          prominent ? 'bg-card' : 'bg-card/40',
         )}
         aria-expanded={open}
       >
         <StatusIcon status={tool.status} />
-        <span className="shrink-0 font-mono text-[13px] font-medium text-ink">{tool.name}</span>
+        <span className="shrink-0 font-mono text-xs font-medium text-foreground">{tool.name}</span>
         {argsSummary ? (
           <span className="min-w-0 truncate text-xs text-muted-foreground" title={tool.args}>
             {argsSummary}
@@ -115,11 +117,11 @@ export function WorkScreenTool({
         </div>
       ) : open && hasBody ? (
         <div className="space-y-3 border-t border-border px-3 py-2">
-          {showArgs ? <ConsolePayloadView value={tool.args} label="参数" /> : null}
+          {showArgs ? <ConsolePayloadView value={tool.args} label={t('console.args', { defaultValue: '参数' })} /> : null}
           {tool.result ? (
             <ConsolePayloadView
               value={tool.result}
-              label="结果"
+              label={t('console.result', { defaultValue: '结果' })}
               codeLang={isFile ? fileLang : undefined}
               artifactSources={isExitWorkspace && showArgs ? [tool.args] : undefined}
             />

@@ -18,7 +18,7 @@ type WorkConsoleTabsProps = {
 };
 
 /**
- * The 调度台 tab strip. One tab per subspace (Stage-Manager model): the most
+ * The workspace-console tab strip. One tab per subspace (Stage-Manager model): the most
  * recently dispatched space is leftmost, and re-entering a space reuses its tab
  * rather than spawning a duplicate. An optional leading "files" tab unifies the
  * directory browser into the same strip.
@@ -64,9 +64,9 @@ export function WorkConsoleTabs({
             >
               <Icon className="size-3 opacity-80" style={{ color: meta.accent } as CSSProperties} />
               <span className="whitespace-nowrap text-xs font-medium leading-none">{meta.label}</span>
-              {pane.tools.length > 0 ? <span className="font-mono text-[9px] leading-none text-muted-foreground/50">{pane.tools.length}</span> : null}
+              {pane.tools.length > 0 ? <span className="font-mono text-2xs leading-none text-muted-foreground/50">{pane.tools.length}</span> : null}
               {hasError ? (
-                <span className="size-1 rounded-full bg-rose-500" />
+                <span className="size-1 rounded-full bg-destructive" />
               ) : running ? (
                 <span className="relative flex size-1.5 items-center justify-center">
                   <span className="animate-pulse-ring absolute size-1.5 rounded-full bg-primary" />

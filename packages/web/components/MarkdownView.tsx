@@ -1,7 +1,7 @@
 'use client';
 
 import clsx from 'clsx';
-import React from 'react';
+import React, { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -18,12 +18,12 @@ type MarkdownViewProps = {
 
 /**
  * Shared markdown renderer (GFM tables, fenced code with highlight.js).
- * Used by the main chat and the 调度台 workspace console.
+ * Used by the main chat and the workspace console.
  */
-export function MarkdownView({ text, compact = false, streaming = false, className }: MarkdownViewProps) {
+function MarkdownViewImpl({ text, compact = false, streaming = false, className }: MarkdownViewProps) {
   const bodyClass = compact
-    ? 'markdown-body wrap-break-word text-[13px] leading-6 text-ink'
-    : 'markdown-body wrap-break-word text-[15px] leading-7 text-ink';
+    ? 'markdown-body w-full min-w-0 max-w-full wrap-break-word text-xs leading-6 text-foreground'
+    : 'markdown-body w-full min-w-0 max-w-full wrap-break-word text-sm leading-7 text-foreground';
 
   return (
     <div className={clsx(bodyClass, streaming && 'md-streaming', className)}>
@@ -59,9 +59,9 @@ export function MarkdownView({ text, compact = false, streaming = false, classNa
               {children}
             </a>
           ),
-          strong: ({ children }) => <strong className="font-semibold text-ink">{children}</strong>,
+          strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
           blockquote: ({ children }) => (
-            <blockquote className={compact ? 'my-1.5 border-l-2 border-border-strong pl-2.5 text-muted-foreground' : 'my-2 border-l-2 border-border-strong pl-3 text-muted-foreground'}>
+            <blockquote className={compact ? 'my-1.5 border-l-2 border-border pl-2.5 text-muted-foreground' : 'my-2 border-l-2 border-border pl-3 text-muted-foreground'}>
               {children}
             </blockquote>
           ),
@@ -74,17 +74,17 @@ export function MarkdownView({ text, compact = false, streaming = false, classNa
               return <CodeView className={compact ? 'my-1.5' : 'my-2'} code={code} lang={lang} highlight={!streaming} />;
             }
             return (
-              <code className="rounded-sm bg-surface-2 px-1.5 py-0.5 font-mono text-[12px] text-ink">{children}</code>
+              <code className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">{children}</code>
             );
           },
           pre: ({ children }) => <>{children}</>,
           table: ({ children }) => (
-            <div className={compact ? 'my-1.5 overflow-x-auto' : 'my-2 overflow-x-auto'}>
-              <table className={compact ? 'w-full border-collapse text-[12px]' : 'w-full border-collapse text-[14px]'}>{children}</table>
+            <div className={compact ? 'my-1.5 w-full min-w-0 max-w-full overflow-x-auto' : 'my-2 w-full min-w-0 max-w-full overflow-x-auto'}>
+              <table className={compact ? 'w-full min-w-max border-collapse text-xs' : 'w-full min-w-max border-collapse text-sm'}>{children}</table>
             </div>
           ),
           th: ({ children }) => (
-            <th className={compact ? 'border border-border bg-surface-2 px-2 py-1 text-left font-medium' : 'border border-border bg-surface-2 px-3 py-1.5 text-left font-medium'}>
+            <th className={compact ? 'border border-border bg-muted px-2 py-1 text-left font-medium' : 'border border-border bg-muted px-3 py-1.5 text-left font-medium'}>
               {children}
             </th>
           ),
@@ -96,3 +96,6 @@ export function MarkdownView({ text, compact = false, streaming = false, classNa
     </div>
   );
 }
+
+/** Memoized: markdown + highlight parsing is expensive; props are all primitives. */
+export const MarkdownView = memo(MarkdownViewImpl);

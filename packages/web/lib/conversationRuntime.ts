@@ -175,6 +175,7 @@ class ConversationRuntime {
   private emit(): void {
     this.rebuild();
     for (const listener of this.listeners) listener();
+    emitRegistry();
   }
 
   /** Hydrate a not-yet-run conversation from its saved snapshot (transcript + panes). */
@@ -940,6 +941,24 @@ class ConversationRuntime {
 
 // ── module registry: one runtime per conversation, surviving view switches ──
 const registry = new Map<string, ConversationRuntime>();
+const registryListeners = new Set<() => void>();
+
+function emitRegistry(): void {
+  for (const listener of registryListeners) listener();
+}
+
+function subscribeRegistry(listener: () => void): () => void {
+  registryListeners.add(listener);
+  return () => registryListeners.delete(listener);
+}
+
+function runningConversationIdsSnapshot(): string {
+  return [...registry.values()]
+    .filter((runtime) => runtime.isRunning())
+    .map((runtime) => runtime.conversationId)
+    .sort()
+    .join('\0');
+}
 
 export function getConversationRuntime(
   conversationId: string,
@@ -950,6 +969,7 @@ export function getConversationRuntime(
   if (!runtime) {
     runtime = new ConversationRuntime(conversationId, engine, context?.avatarId, context?.projectId, context?.modelId, context?.permissionMode);
     registry.set(conversationId, runtime);
+    emitRegistry();
   } else if (context) {
     runtime.bindContext(context?.avatarId, context?.projectId, context?.modelId, context?.permissionMode);
   }
@@ -960,6 +980,7 @@ export function dropConversationRuntime(conversationId: string): void {
   const runtime = registry.get(conversationId);
   runtime?.abort();
   registry.delete(conversationId);
+  emitRegistry();
 }
 
 export function dropAllConversationRuntimes(): void {
@@ -967,6 +988,7 @@ export function dropAllConversationRuntimes(): void {
     runtime.abort();
   }
   registry.clear();
+  emitRegistry();
 }
 
 export type ConversationView = WorkbenchSnapshot & {
@@ -1008,6 +1030,11 @@ export function useConversation(
     hydrate: runtime.hydrate.bind(runtime),
     isRunning: () => runtime.isRunning(),
   };
+}
+
+export function useRunningConversationIds(): string[] {
+  const raw = useSyncExternalStore(subscribeRegistry, runningConversationIdsSnapshot, () => '');
+  return raw ? raw.split('\0') : [];
 }
 
 export function newConversationId(): string {

@@ -1,41 +1,32 @@
 'use client';
 
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
   Bot,
   BookOpen,
   Boxes,
   ChevronDown,
   Clock,
-  Folder,
-  Info,
+  FolderPlus,
   MessageSquarePlus,
-  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
-  Pencil,
-  Plus,
+  Search,
   Server,
-  Settings,
   Trash2,
 } from 'lucide-react';
 import clsx from 'clsx';
-import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
-import { DEFAULT_AVATAR_ID } from '@zleap/core';
-import { deleteJson } from '../lib/api';
+import { useProjectOrder, normalizeProjectOrder, orderProjects, moveStringItem, sameStringList } from '@/hooks/useProjectOrder';
 import { DeleteConfirmDialog } from './ui/delete-confirm-dialog';
-import { AvatarBadge } from './AvatarBadge';
-import { parseAvatarTheme } from '../lib/avatars';
-import { DEFAULT_SPACE_ACCENT, resolveSpaceIcon } from '../lib/spaces';
-import type { AvatarView, Resources, SpaceProfile } from '../lib/useResources';
+import type { Resources } from '../lib/useResources';
 import type { Conversation } from '../lib/useConversations';
 import type { PageKey } from './manage/pages';
 import type { EditKind } from './manage/edit';
-import { AvatarDialog } from './manage/AvatarDialog';
-import { SpaceDialog } from './manage/SpaceDialog';
-import { Input } from './ui/input';
+import { IconButton } from './ui/icon-button';
+import { ConversationRow, ProjectConversationGroup } from './sidebar/ConversationList';
+import { ConversationCommandPalette } from './sidebar/ConversationCommandPalette';
+import { AccountMenu } from './sidebar/AccountMenu';
 
 type MainView = 'chat' | 'settings' | PageKey;
 
@@ -57,10 +48,20 @@ type SidebarProps = {
   onOpenSettings?: () => void;
   /** The user's conversations (most-recent-first), shown grouped by project. */
   conversations?: Conversation[];
+  /** Archived conversations, shown in a collapsible group at the bottom. */
+  archivedConversations?: Conversation[];
   activeConversationId?: string | null;
+  /** The conversation currently running — shows a spinner in its row. */
+  runningConversationIds?: string[];
   onSelectConversation?: (id: string) => void;
+  /** Permanently delete (used from the archive group). */
   onDeleteConversation?: (id: string) => void;
+  /** Archive a conversation (soft, reversible). */
+  onArchiveConversation?: (id: string) => void;
+  /** Restore an archived conversation. */
+  onUnarchiveConversation?: (id: string) => void;
   onRenameConversation?: (id: string, title: string) => void;
+  onCreateProject?: () => void;
   /** Bumped after any create/edit so the page can refresh chat-side spaces. */
   onResourcesChanged?: () => void;
   /** Clear edit view when the open entity was removed from the sidebar. */
@@ -70,11 +71,9 @@ type SidebarProps = {
 
 const STORAGE_KEY = 'zleap-sidebar-collapsed';
 const PROJECT_FOLDERS_KEY = 'zleap-sidebar-project-folders';
-const PROJECT_ORDER_KEY = 'zleap-sidebar-project-order';
+const SECTIONS_KEY = 'zleap-sidebar-sections';
 const PROJECT_DRAG_LONG_PRESS_MS = 220;
 const PROJECT_DRAG_MOVE_CANCEL_PX = 8;
-const ABOUT_URL = 'https://github.com/Zleap-AI/Zleap-Agent/';
-type ManagerPanel = 'avatar' | 'space';
 type ProjectDragSession = {
   projectId: string;
   pointerId: number;
@@ -97,10 +96,15 @@ export function Sidebar({
   onNewProjectChat,
   onOpenSettings,
   conversations = [],
+  archivedConversations = [],
   activeConversationId,
+  runningConversationIds = [],
   onSelectConversation,
   onDeleteConversation,
+  onArchiveConversation,
+  onUnarchiveConversation,
   onRenameConversation,
+  onCreateProject,
   onResourcesChanged,
   onEntityDeleted,
   forceExpanded = false,
@@ -108,14 +112,11 @@ export function Sidebar({
   const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(false);
   const [folderOpen, setFolderOpen] = useState<Record<string, boolean>>({});
-  const [projectOrder, setProjectOrder] = useState<string[]>([]);
-  const [projectOrderReady, setProjectOrderReady] = useState(false);
+  const [sectionsCollapsed, setSectionsCollapsed] = useState<{ projects?: boolean; conversations?: boolean; archived?: boolean }>({});
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [clearArchivedOpen, setClearArchivedOpen] = useState(false);
+  const { projectOrder, setProjectOrder } = useProjectOrder(resources.projects.map((project) => project.id));
   const [draggingProjectId, setDraggingProjectId] = useState<string | null>(null);
-  const [managerOpen, setManagerOpen] = useState<ManagerPanel | null>(null);
-  const [avatarDialog, setAvatarDialog] = useState(false);
-  const [spaceDialog, setSpaceDialog] = useState(false);
-  const [deletingSpace, setDeletingSpace] = useState<SpaceProfile | null>(null);
-  const [deletingAvatar, setDeletingAvatar] = useState<AvatarView | null>(null);
   const [deletingConversation, setDeletingConversation] = useState<Conversation | null>(null);
   const projectDragRef = useRef<ProjectDragSession | null>(null);
   const ignoreNextProjectClickRef = useRef(false);
@@ -127,22 +128,29 @@ export function Sidebar({
     try {
       const raw = localStorage.getItem(PROJECT_FOLDERS_KEY);
       if (raw) setFolderOpen(JSON.parse(raw) as Record<string, boolean>);
+      const rawSections = localStorage.getItem(SECTIONS_KEY);
+      if (rawSections) setSectionsCollapsed(JSON.parse(rawSections) as { projects?: boolean; conversations?: boolean });
     } catch {
       /* ignore */
     }
-    try {
-      const raw = localStorage.getItem(PROJECT_ORDER_KEY);
-      setProjectOrder(readStoredStringList(raw));
-    } catch {
-      setProjectOrder([]);
-    } finally {
-      setProjectOrderReady(true);
-    }
   }, []);
+
+  const toggleSection = (key: 'projects' | 'conversations' | 'archived', defaultCollapsed = false) => {
+    setSectionsCollapsed((prev) => {
+      const next = { ...prev, [key]: !(prev[key] ?? defaultCollapsed) };
+      try {
+        localStorage.setItem(SECTIONS_KEY, JSON.stringify(next));
+      } catch {
+        /* best-effort */
+      }
+      return next;
+    });
+  };
 
   const compact = forceExpanded ? false : collapsed;
   const orderedProjects = orderProjects(resources.projects, projectOrder);
   const projectIds = new Set(orderedProjects.map((project) => project.id));
+  const runningConversationSet = useMemo(() => new Set(runningConversationIds), [runningConversationIds]);
   const projectGroups = orderedProjects.map((project) => ({
     project,
     conversations: conversations.filter((conversation) => conversation.projectId === project.id),
@@ -150,19 +158,10 @@ export function Sidebar({
   const looseConversations = conversations.filter(
     (conversation) => !conversation.projectId || !projectIds.has(conversation.projectId),
   );
-  const spaceItems: SpaceProfile[] = [...resources.spaces].sort(
-    (a, b) => Number(b.kind === 'main') - Number(a.kind === 'main'),
-  );
-
-  useEffect(() => {
-    if (!projectOrderReady) return;
-    setProjectOrder((current) => {
-      const next = normalizeProjectOrder(resources.projects.map((project) => project.id), current);
-      if (sameStringList(current, next)) return current;
-      writeProjectOrder(next);
-      return next;
-    });
-  }, [projectOrderReady, resources.projects]);
+  // Conversation search now lives in the ⌘K command palette; the sidebar lists show everything.
+  const filteredProjectGroups = projectGroups;
+  const filteredLooseConversations = looseConversations;
+  const filteredArchivedConversations = archivedConversations;
 
   const clearProjectDrag = (releasePointer = true) => {
     const session = projectDragRef.current;
@@ -196,6 +195,18 @@ export function Sidebar({
     });
   };
 
+  useEffect(() => {
+    if (forceExpanded) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [forceExpanded]);
+
   const toggleProjectFolderFromClick = (projectId: string) => {
     if (ignoreNextProjectClickRef.current) {
       ignoreNextProjectClickRef.current = false;
@@ -216,28 +227,6 @@ export function Sidebar({
     });
   };
 
-  const openActiveAvatar = () => {
-    onEdit('avatar', activeAvatarId || DEFAULT_AVATAR_ID);
-  };
-
-  const openPrimarySpace = () => {
-    const space = primarySpace(resources.spaces);
-    if (space) {
-      onEdit('space', space.id);
-      return;
-    }
-    setSpaceDialog(true);
-  };
-
-  const toggleManager = (panel: ManagerPanel) => {
-    if (compact) {
-      if (panel === 'avatar') openActiveAvatar();
-      else openPrimarySpace();
-      return;
-    }
-    setManagerOpen((current) => (current === panel ? null : panel));
-  };
-
   const reorderProject = (dragProjectId: string, overProjectId: string, insertAfter: boolean) => {
     setProjectOrder((current) => {
       const ids = normalizeProjectOrder(resources.projects.map((project) => project.id), current);
@@ -246,7 +235,6 @@ export function Sidebar({
       if (from < 0 || over < 0) return current;
       const next = moveStringItem(ids, from, over + (insertAfter ? 1 : 0));
       if (sameStringList(ids, next)) return current;
-      writeProjectOrder(next);
       return next;
     });
   };
@@ -313,70 +301,33 @@ export function Sidebar({
     }
   };
 
-  const afterAvatarSaved = (avatarId?: string) => {
-    void resources.reload();
-    onResourcesChanged?.();
-    if (avatarId) onEdit('avatar', avatarId);
-  };
-
-  const afterSpaceSaved = () => {
-    void resources.reload();
-    onResourcesChanged?.();
-  };
-
-  const removeSpace = async (space: SpaceProfile) => {
-    try {
-      await deleteJson('/api/spaces', { id: space.storageId ?? space.id });
-      toast.success(t('common.delete'));
-      void resources.reload();
-      onResourcesChanged?.();
-      onEntityDeleted?.('space', space.id);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-      throw err;
-    }
-  };
-
-  const removeAvatar = async (avatar: AvatarView) => {
-    try {
-      await deleteJson('/api/avatar', { id: avatar.id });
-      toast.success(t('common.delete'));
-      void resources.reload();
-      onResourcesChanged?.();
-      onEntityDeleted?.('avatar', avatar.id);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-      throw err;
-    }
-  };
-
   return (
     <aside
       className={clsx(
-        'flex h-full shrink-0 flex-col border-r border-border bg-sidebar text-[14px] transition-[width] duration-300 ease-out',
+        'flex h-full shrink-0 flex-col border-r border-border bg-sidebar text-sm transition-[width] duration-[var(--duration-base)] ease-out',
         compact ? 'w-[60px]' : 'w-72',
       )}
     >
       <div className={clsx('flex h-12 shrink-0 items-center px-3', compact ? 'justify-center' : 'justify-between')}>
         {!compact ? (
-          <button type="button" onClick={() => onNavigate('chat')} className="flex min-w-0 items-center gap-2" title="Home">
+          <button type="button" onClick={() => onNavigate('chat')} className="flex min-w-0 items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/40" title="Home">
             <BrandMark />
-            <span className="min-w-0 truncate text-[14px] font-semibold tracking-tight text-foreground">Zleap-Agent</span>
-            <span className="shrink-0 rounded-sm border border-border bg-surface px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground">
+            <span className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground">Zleap-Agent</span>
+            <span className="shrink-0 rounded-sm border border-border bg-card px-1.5 py-0.5 text-2xs font-medium leading-none text-muted-foreground">
               Preview
             </span>
           </button>
         ) : null}
         {forceExpanded ? null : (
-          <button
-            type="button"
+          <IconButton
+            size="icon-sm"
             onClick={toggleCollapsed}
-            className="flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            className="shrink-0 text-muted-foreground"
             title={compact ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label="Toggle sidebar"
           >
             {compact ? <PanelLeftOpen className="h-3.5 w-3.5" /> : <PanelLeftClose className="h-3.5 w-3.5" />}
-          </button>
+          </IconButton>
         )}
       </div>
 
@@ -390,48 +341,26 @@ export function Sidebar({
           />
           <PrimaryAction
             compact={compact}
+            icon={<Search className="h-4 w-4" />}
+            label={t('common.search', { defaultValue: '搜索' })}
+            shortcut="⌘K"
+            active={paletteOpen}
+            onClick={() => setPaletteOpen(true)}
+          />
+          <PrimaryAction
+            compact={compact}
             icon={<Bot className="h-4 w-4" />}
             label={t('nav.avatar')}
-            active={activeEdit?.kind === 'avatar' || managerOpen === 'avatar'}
-            expanded={managerOpen === 'avatar'}
-            onClick={() => toggleManager('avatar')}
+            active={activeEdit?.kind === 'avatar' || (!activeEdit && activeView === 'avatar')}
+            onClick={() => onNavigate('avatar')}
           />
-          <ManagerPanelList open={!compact && managerOpen === 'avatar'}>
-            {resources.avatars.map((avatar) => (
-              <AvatarManagerRow
-                key={avatar.id}
-                avatar={avatar}
-                active={activeEdit?.kind === 'avatar' && activeEdit.id === avatar.id}
-                onClick={() => onEdit('avatar', avatar.id)}
-                onDelete={avatar.id === DEFAULT_AVATAR_ID ? undefined : () => setDeletingAvatar(avatar)}
-                deleteTitle={t('common.delete')}
-              />
-            ))}
-            {resources.avatars.length === 0 ? <Empty>{resources.loading ? t('common.loading') : t('common.none')}</Empty> : null}
-            <ManagerAddRow label={t('avatar.new')} onClick={() => setAvatarDialog(true)} />
-          </ManagerPanelList>
           <PrimaryAction
             compact={compact}
             icon={<Boxes className="h-4 w-4" />}
             label={t('nav.space')}
-            active={activeEdit?.kind === 'space' || managerOpen === 'space'}
-            expanded={managerOpen === 'space'}
-            onClick={() => toggleManager('space')}
+            active={activeEdit?.kind === 'space' || (!activeEdit && activeView === 'space')}
+            onClick={() => onNavigate('space')}
           />
-          <ManagerPanelList open={!compact && managerOpen === 'space'}>
-            {spaceItems.map((space) => (
-              <SpaceManagerRow
-                key={space.storageId ?? space.id}
-                space={space}
-                active={activeEdit?.kind === 'space' && activeEdit.id === space.id}
-                onClick={() => onEdit('space', space.id)}
-                onDelete={space.kind === 'main' ? undefined : () => setDeletingSpace(space)}
-                deleteTitle={t('common.delete')}
-              />
-            ))}
-            {spaceItems.length === 0 ? <Empty>{resources.loading ? t('common.loading') : t('common.none')}</Empty> : null}
-            <ManagerAddRow label={t('space.new')} onClick={() => setSpaceDialog(true)} />
-          </ManagerPanelList>
           <PrimaryAction
             compact={compact}
             icon={<BookOpen className="h-4 w-4" />}
@@ -457,9 +386,20 @@ export function Sidebar({
       </div>
 
       <div className="no-scrollbar mt-3 flex-1 overflow-y-auto px-2.5 pb-3">
-        {!compact ? <SidebarLabel>{t('nav.project')}</SidebarLabel> : null}
-        <div className="flex flex-col gap-1">
-          {projectGroups.map(({ project, conversations: projectConversations }) => {
+        {!compact ? (
+          <SidebarLabel
+            collapsed={sectionsCollapsed.projects}
+            onToggle={() => toggleSection('projects')}
+            count={filteredProjectGroups.length}
+            onAdd={onCreateProject}
+            addLabel={t('project.new')}
+            addIcon={<FolderPlus className="h-3.5 w-3.5" />}
+          >
+            {t('nav.project')}
+          </SidebarLabel>
+        ) : null}
+        <div className={clsx('flex flex-col gap-1', !compact && sectionsCollapsed.projects && 'hidden')}>
+          {filteredProjectGroups.map(({ project, conversations: projectConversations }) => {
             const open = folderOpen[project.id] ?? true;
             const active = projectConversations.some((conversation) => conversation.id === activeConversationId);
             return (
@@ -486,9 +426,10 @@ export function Sidebar({
                     active={conversation.id === activeConversationId}
                     compact={compact}
                     nested
+                    running={conversation.id !== activeConversationId && runningConversationSet.has(conversation.id)}
                     onSelect={() => onSelectConversation?.(conversation.id)}
                     onRename={(title) => onRenameConversation?.(conversation.id, title)}
-                    onDelete={onDeleteConversation ? () => setDeletingConversation(conversation) : undefined}
+                    onArchive={onArchiveConversation ? () => onArchiveConversation(conversation.id) : undefined}
                   />
                 ))}
               </ProjectConversationGroup>
@@ -496,60 +437,106 @@ export function Sidebar({
           })}
         </div>
 
-        {!compact ? <SidebarLabel className="mt-5">{t('nav.conversation')}</SidebarLabel> : null}
-        <div className="flex flex-col gap-0.5">
-          {looseConversations.map((conversation) => (
+        {!compact ? (
+          <SidebarLabel
+            className="mt-5"
+            collapsed={sectionsCollapsed.conversations}
+            onToggle={() => toggleSection('conversations')}
+            count={filteredLooseConversations.length}
+            onAdd={onNewChat}
+            addLabel={t('common.newChat')}
+            addIcon={<MessageSquarePlus className="h-3.5 w-3.5" />}
+          >
+            {t('nav.conversation')}
+          </SidebarLabel>
+        ) : null}
+        <div className={clsx('flex flex-col gap-0.5', !compact && sectionsCollapsed.conversations && 'hidden')}>
+          {filteredLooseConversations.map((conversation) => (
             <ConversationRow
               key={conversation.id}
               conv={conversation}
               active={conversation.id === activeConversationId}
               compact={compact}
+              running={conversation.id !== activeConversationId && runningConversationSet.has(conversation.id)}
               onSelect={() => onSelectConversation?.(conversation.id)}
               onRename={(title) => onRenameConversation?.(conversation.id, title)}
-              onDelete={onDeleteConversation ? () => setDeletingConversation(conversation) : undefined}
+              onArchive={onArchiveConversation ? () => onArchiveConversation(conversation.id) : undefined}
             />
           ))}
-          {!compact && looseConversations.length === 0 && projectGroups.length === 0 ? (
+          {!compact && filteredLooseConversations.length === 0 && filteredProjectGroups.length === 0 && filteredArchivedConversations.length === 0 ? (
             <Empty>{t('chat.emptyConversations')}</Empty>
           ) : null}
         </div>
+
+        {!compact && filteredArchivedConversations.length > 0 ? (
+          <>
+            <SidebarLabel
+              className="mt-5"
+              collapsed={sectionsCollapsed.archived ?? true}
+              onToggle={() => toggleSection('archived', true)}
+              count={filteredArchivedConversations.length}
+              onAction={onDeleteConversation ? () => setClearArchivedOpen(true) : undefined}
+              actionLabel={t('chat.clearArchived', { defaultValue: '清空归档' })}
+              actionIcon={<Trash2 className="h-3.5 w-3.5" />}
+              actionClassName="text-destructive/70 hover:text-destructive"
+            >
+              {t('chat.archived', { defaultValue: '归档' })}
+            </SidebarLabel>
+            <div className={clsx('flex flex-col gap-0.5', (sectionsCollapsed.archived ?? true) && 'hidden')}>
+              {filteredArchivedConversations.map((conversation) => (
+                <ConversationRow
+                  key={conversation.id}
+                  conv={conversation}
+                  active={conversation.id === activeConversationId}
+                  compact={false}
+                  onSelect={() => onSelectConversation?.(conversation.id)}
+                  onUnarchive={() => onUnarchiveConversation?.(conversation.id)}
+                  onDelete={() => setDeletingConversation(conversation)}
+                />
+              ))}
+            </div>
+          </>
+        ) : null}
       </div>
 
       <AccountMenu compact={compact} model={model} onOpenSettings={onOpenSettings} active={activeView === 'settings'} />
 
-      <AvatarDialog open={avatarDialog} onOpenChange={setAvatarDialog} onSaved={afterAvatarSaved} />
-      <SpaceDialog open={spaceDialog} onOpenChange={setSpaceDialog} avatarId={activeAvatarId} resources={resources} onSaved={afterSpaceSaved} />
-      <DeleteConfirmDialog
-        open={deletingSpace !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeletingSpace(null);
-        }}
-        title={t('common.delete')}
-        description={t('common.deleteConfirm', { name: deletingSpace?.label ?? '' })}
-        onConfirm={async () => {
-          if (deletingSpace) await removeSpace(deletingSpace);
-        }}
+      <ConversationCommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        conversations={conversations}
+        archivedConversations={archivedConversations}
+        onSelectConversation={(id) => onSelectConversation?.(id)}
+        onNewChat={onNewChat}
+        onOpenSettings={onOpenSettings}
+        onNavigate={onNavigate}
+        onCreateProject={onCreateProject}
       />
-      <DeleteConfirmDialog
-        open={deletingAvatar !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeletingAvatar(null);
-        }}
-        title={t('common.delete')}
-        description={t('common.deleteConfirm', { name: deletingAvatar?.name ?? '' })}
-        onConfirm={async () => {
-          if (deletingAvatar) await removeAvatar(deletingAvatar);
-        }}
-      />
+
+      {/* 助手/空间的新建·删除已迁移到各自列表页（pages-avatar / pages-space） */}
       <DeleteConfirmDialog
         open={deletingConversation !== null}
         onOpenChange={(open) => {
           if (!open) setDeletingConversation(null);
         }}
-        title={t('common.delete')}
-        description={t('chat.deleteConfirm', { name: deletingConversation?.title ?? '' })}
+        title={t('chat.deletePermanently', { defaultValue: '彻底删除' })}
+        description={t('chat.deletePermanentlyConfirm', { defaultValue: '将永久删除「{{name}}」，无法恢复。', name: deletingConversation?.title ?? '' })}
+        confirmLabel={t('chat.deletePermanently', { defaultValue: '彻底删除' })}
         onConfirm={() => {
           if (deletingConversation) onDeleteConversation?.(deletingConversation.id);
+        }}
+      />
+      <DeleteConfirmDialog
+        open={clearArchivedOpen}
+        onOpenChange={setClearArchivedOpen}
+        title={t('chat.clearArchived', { defaultValue: '清空归档' })}
+        description={t('chat.clearArchivedConfirm', {
+          defaultValue: '将永久删除 {{count}} 个已归档对话，无法恢复。',
+          count: archivedConversations.length,
+        })}
+        confirmLabel={t('chat.clearArchived', { defaultValue: '清空归档' })}
+        onConfirm={() => {
+          archivedConversations.forEach((conversation) => onDeleteConversation?.(conversation.id));
         }}
       />
     </aside>
@@ -558,7 +545,7 @@ export function Sidebar({
 
 function BrandMark() {
   return (
-    <span className="flex h-6 w-6 items-center justify-center rounded-sm bg-accent-grad text-xs font-bold leading-none text-white shadow-xs ring-1 ring-black/5">
+    <span className="flex h-6 w-6 items-center justify-center rounded-sm bg-accent-grad text-xs font-bold leading-none text-primary-foreground shadow-xs ring-1 ring-border/50">
       Z
     </span>
   );
@@ -568,65 +555,127 @@ function Empty({ children }: { children: ReactNode }) {
   return <div className="px-2 py-1.5 text-xs text-muted-foreground/70">{children}</div>;
 }
 
-function SidebarLabel({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={clsx('mb-1.5 px-1.5 text-[12px] font-medium text-muted-foreground/75', className)}>{children}</div>;
-}
-
-function readStoredStringList(raw: string | null): string[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0) : [];
-  } catch {
-    return [];
+function SidebarLabel({
+  children,
+  className,
+  collapsed,
+  onToggle,
+  count,
+  onAdd,
+  addLabel,
+  addIcon,
+  onAction,
+  actionLabel,
+  actionIcon,
+  actionClassName,
+}: {
+  children: ReactNode;
+  className?: string;
+  collapsed?: boolean;
+  onToggle?: () => void;
+  count?: number;
+  onAdd?: () => void;
+  addLabel?: string;
+  addIcon?: ReactNode;
+  onAction?: () => void;
+  actionLabel?: string;
+  actionIcon?: ReactNode;
+  actionClassName?: string;
+}) {
+  if (onToggle) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          onToggle();
+        }}
+        className={clsx(
+          'group/sec mb-1.5 flex h-7 w-full items-center rounded-md px-1.5 text-left text-xs font-medium text-muted-foreground/75 outline-none transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40',
+          className,
+        )}
+      >
+        <span className="flex min-w-0 flex-1 items-center gap-1">
+          <span className="truncate">{children}</span>
+          <ChevronDown
+            className={clsx(
+              'h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform group-hover/sec:text-muted-foreground',
+              collapsed ? '-rotate-90' : 'rotate-0',
+            )}
+          />
+        </span>
+        <div className="ml-auto flex items-center gap-1">
+          {count != null ? (
+            <span className="text-2xs tabular-nums text-muted-foreground/55 opacity-0 transition-opacity group-hover/sec:opacity-100 group-focus-within/sec:opacity-100">
+              {count}
+            </span>
+          ) : null}
+          {onAction ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAction();
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                event.stopPropagation();
+                onAction();
+              }}
+              title={actionLabel}
+              aria-label={actionLabel}
+              className={clsx(
+                'flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/65 opacity-0 transition hover:bg-muted hover:text-foreground group-hover/sec:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40',
+                actionClassName,
+              )}
+            >
+              {actionIcon}
+            </button>
+          ) : null}
+          {onAdd ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAdd();
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                event.stopPropagation();
+                onAdd();
+              }}
+              title={addLabel}
+              aria-label={addLabel}
+              className="flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/65 opacity-0 transition hover:bg-muted hover:text-foreground group-hover/sec:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              {addIcon}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
   }
-}
-
-function writeProjectOrder(order: string[]): void {
-  try {
-    localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(order));
-  } catch {
-    /* ignore */
-  }
-}
-
-function normalizeProjectOrder(projectIds: string[], order: string[]): string[] {
-  const available = new Set(projectIds);
-  const seen = new Set<string>();
-  const next: string[] = [];
-  for (const id of order) {
-    if (!available.has(id) || seen.has(id)) continue;
-    seen.add(id);
-    next.push(id);
-  }
-  for (const id of projectIds) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    next.push(id);
-  }
-  return next;
-}
-
-function orderProjects<T extends { id: string }>(projects: T[], order: string[]): T[] {
-  const byId = new Map(projects.map((project) => [project.id, project]));
-  const orderedIds = normalizeProjectOrder(projects.map((project) => project.id), order);
-  return orderedIds.flatMap((id) => {
-    const project = byId.get(id);
-    return project ? [project] : [];
-  });
-}
-
-function moveStringItem(items: string[], from: number, to: number): string[] {
-  const next = [...items];
-  const [item] = next.splice(from, 1);
-  if (!item) return items;
-  const target = Math.max(0, Math.min(from < to ? to - 1 : to, next.length));
-  next.splice(target, 0, item);
-  return next;
-}
-
-function sameStringList(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((item, index) => item === b[index]);
+  return (
+    <div className={clsx('mb-1.5 flex h-6 items-center px-1.5 text-xs font-medium text-muted-foreground/75', className)}>
+      <span className="truncate">{children}</span>
+      {onAdd ? (
+        <button
+          type="button"
+          onClick={onAdd}
+          title={addLabel}
+          aria-label={addLabel}
+          className="ml-auto flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/65 transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          {addIcon}
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 function PrimaryAction({
@@ -635,6 +684,7 @@ function PrimaryAction({
   label,
   active,
   expanded,
+  shortcut,
   onClick,
 }: {
   compact: boolean;
@@ -642,6 +692,7 @@ function PrimaryAction({
   label: string;
   active?: boolean;
   expanded?: boolean;
+  shortcut?: string;
   onClick: () => void;
 }) {
   return (
@@ -650,13 +701,18 @@ function PrimaryAction({
       onClick={onClick}
       title={label}
       className={clsx(
-        'flex h-8 items-center rounded-md transition-colors outline-none',
+        'group/primary relative flex h-8 items-center rounded-md transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
         compact ? 'w-8 justify-center' : 'w-full gap-2 px-2',
         active ? 'bg-muted font-medium text-foreground' : 'text-foreground/85 hover:bg-muted hover:text-foreground',
       )}
     >
       <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground [&_svg]:size-3.5">{icon}</span>
       {!compact ? <span className="truncate">{label}</span> : null}
+      {!compact && shortcut ? (
+        <span className="ml-auto font-mono text-2xs tracking-wide text-muted-foreground/50 opacity-0 transition-opacity group-hover/primary:opacity-100">
+          {shortcut}
+        </span>
+      ) : null}
       {!compact && expanded !== undefined ? (
         <ChevronDown
           className={clsx(
@@ -667,536 +723,4 @@ function PrimaryAction({
       ) : null}
     </button>
   );
-}
-
-function ManagerPanelList({ open, children }: { open: boolean; children: ReactNode }) {
-  return (
-    <AnimatePresence initial={false}>
-      {open ? (
-        <motion.div
-          initial={{ height: 0, opacity: 0 }}
-          animate={{ height: 'auto', opacity: 1 }}
-          exit={{ height: 0, opacity: 0 }}
-          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          className="overflow-hidden"
-        >
-          <div className="ml-5 flex flex-col gap-0.5 border-l border-border py-1 pl-2">{children}</div>
-        </motion.div>
-      ) : null}
-    </AnimatePresence>
-  );
-}
-
-function AvatarManagerRow({
-  avatar,
-  active,
-  onClick,
-  onDelete,
-  deleteTitle,
-}: {
-  avatar: AvatarView;
-  active?: boolean;
-  onClick: () => void;
-  onDelete?: () => void;
-  deleteTitle?: string;
-}) {
-  const theme = parseAvatarTheme(avatar.metadata);
-  return (
-    <ManagerRow
-      title={avatar.name}
-      active={active}
-      icon={
-        <AvatarBadge
-          name={avatar.name}
-          emoji={theme.emoji}
-          accent={theme.accent}
-          className="size-4"
-          letterClassName="text-[9px]"
-          emojiClassName="text-sm leading-none"
-        />
-      }
-      onClick={onClick}
-      onDelete={onDelete}
-      deleteTitle={deleteTitle}
-    />
-  );
-}
-
-function SpaceManagerRow({
-  space,
-  active,
-  onClick,
-  onDelete,
-  deleteTitle,
-}: {
-  space: SpaceProfile;
-  active?: boolean;
-  onClick: () => void;
-  onDelete?: () => void;
-  deleteTitle?: string;
-}) {
-  const Icon = resolveSpaceIcon(space.icon);
-  return (
-    <ManagerRow
-      title={space.label}
-      active={active}
-      icon={<Icon className="h-4 w-4 shrink-0" style={{ color: space.accent ?? DEFAULT_SPACE_ACCENT }} />}
-      onClick={onClick}
-      onDelete={onDelete}
-      deleteTitle={deleteTitle}
-    />
-  );
-}
-
-function ManagerRow({
-  title,
-  icon,
-  active,
-  onClick,
-  onDelete,
-  deleteTitle,
-}: {
-  title: string;
-  icon: ReactNode;
-  active?: boolean;
-  onClick: () => void;
-  onDelete?: () => void;
-  deleteTitle?: string;
-}) {
-  return (
-    <div
-      className={clsx(
-        'group/managed relative flex h-7 w-full min-w-0 items-center rounded-md pr-1 text-[13px] transition-colors',
-        active ? 'bg-muted' : 'hover:bg-muted',
-      )}
-    >
-      <button
-        type="button"
-        onClick={onClick}
-        title={title}
-        className={clsx(
-          'flex min-w-0 flex-1 items-center gap-1.5 px-2 text-left outline-none transition-colors',
-          active ? 'font-medium text-foreground' : 'text-foreground/85 group-hover/managed:text-foreground',
-        )}
-      >
-        <span className="flex size-3.5 shrink-0 items-center justify-center">{icon}</span>
-        <span className="truncate">{title}</span>
-      </button>
-      {onDelete ? (
-        <div className="hidden shrink-0 items-center pr-0.5 group-hover/managed:flex">
-          <RowAction
-            icon={<Trash2 className="h-3 w-3" />}
-            title={deleteTitle ?? ''}
-            onClick={onDelete}
-          />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ManagerAddRow({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[13px] text-muted-foreground transition hover:bg-muted hover:text-foreground"
-    >
-      <Plus className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate">{label}</span>
-    </button>
-  );
-}
-
-function ProjectConversationGroup({
-  projectId,
-  projectName,
-  compact,
-  open,
-  active,
-  dragging,
-  dragActive,
-  onPointerDown,
-  onPointerMove,
-  onPointerEnd,
-  onToggle,
-  onOpen,
-  onNewChat,
-  children,
-}: {
-  projectId: string;
-  projectName: string;
-  compact: boolean;
-  open: boolean;
-  active: boolean;
-  dragging?: boolean;
-  dragActive?: boolean;
-  onPointerDown?: (projectId: string, event: ReactPointerEvent<HTMLElement>) => void;
-  onPointerMove?: (event: ReactPointerEvent<HTMLElement>) => void;
-  onPointerEnd?: (event: ReactPointerEvent<HTMLElement>) => void;
-  onToggle: () => void;
-  onOpen: () => void;
-  onNewChat?: () => void;
-  children: ReactNode;
-}) {
-  const { t } = useTranslation();
-
-  if (compact) {
-    return (
-      <button
-        type="button"
-        onClick={onOpen}
-        title={projectName}
-        className={clsx(
-          'mx-auto flex h-8 w-8 items-center justify-center rounded-md transition-colors',
-          active ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-        )}
-      >
-        <Folder className="h-3.5 w-3.5" />
-      </button>
-    );
-  }
-
-  return (
-    <div data-sidebar-project-id={projectId} className={clsx('rounded-md', dragging && 'relative z-10')}>
-      <div
-        role="button"
-        tabIndex={0}
-        onPointerDown={(event) => onPointerDown?.(projectId, event)}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerEnd}
-        onPointerCancel={onPointerEnd}
-        onClick={onToggle}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            onToggle();
-          }
-        }}
-        className={clsx(
-          'group flex h-7 w-full select-none items-center gap-1.5 rounded-md px-1.5 text-left text-[13px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          dragActive ? 'cursor-grabbing' : 'cursor-grab',
-          active ? 'bg-muted text-foreground' : 'text-foreground/85 hover:bg-muted',
-          dragging && 'bg-muted text-foreground shadow-xs ring-1 ring-ring/30',
-        )}
-        title={projectName}
-      >
-        <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 truncate">{projectName}</span>
-        <ChevronDown
-          className={clsx(
-            'h-3 w-3 shrink-0 opacity-0 text-muted-foreground/70 transition-[opacity,transform] group-hover:opacity-100',
-            open ? 'rotate-0' : '-rotate-90',
-          )}
-        />
-        <div className="pointer-events-none ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpen();
-            }}
-            className="flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 transition hover:bg-background hover:text-foreground"
-            aria-label={t('project.editTitle')}
-            title={t('project.editTitle')}
-          >
-            <MoreHorizontal className="h-3.5 w-3.5" />
-          </button>
-          {onNewChat ? (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onNewChat();
-              }}
-              className="flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 transition hover:bg-background hover:text-foreground"
-              aria-label={t('chat.newInProject')}
-              title={t('chat.newInProject')}
-            >
-              <MessageSquarePlus className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-        </div>
-      </div>
-      <AnimatePresence initial={false}>
-        {open ? (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-            className="overflow-hidden"
-          >
-            <div className="ml-5 flex flex-col gap-0.5 py-0.5">{children}</div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function ConversationRow({
-  conv,
-  active,
-  compact,
-  nested = false,
-  onSelect,
-  onRename,
-  onDelete,
-}: {
-  conv: Conversation;
-  active: boolean;
-  compact: boolean;
-  nested?: boolean;
-  onSelect: () => void;
-  onRename: (title: string) => void;
-  onDelete?: () => void;
-}) {
-  const { t } = useTranslation();
-  const [renaming, setRenaming] = useState(false);
-  const [draft, setDraft] = useState(conv.title);
-  const sourceLabel = conversationSourceLabel(conv.source, t);
-
-  if (compact) {
-    return (
-      <button
-        type="button"
-        onClick={onSelect}
-        title={sourceLabel ? `${conv.title} · ${sourceLabel}` : conv.title}
-        className={clsx(
-          'relative mx-auto flex h-8 w-8 items-center justify-center rounded-md transition-colors',
-          active ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-        )}
-      >
-        <span className="text-[11px] font-semibold">{conv.title.trim().charAt(0) || '·'}</span>
-        {sourceLabel ? <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary/70" /> : null}
-      </button>
-    );
-  }
-
-  if (renaming) {
-    const commit = () => {
-      setRenaming(false);
-      if (draft.trim() && draft.trim() !== conv.title) onRename(draft);
-      else setDraft(conv.title);
-    };
-    return (
-      <div className={clsx('flex h-7 items-center rounded-md bg-muted px-2', nested && 'ml-1')}>
-        <Input
-          autoFocus
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') commit();
-            if (event.key === 'Escape') {
-              setDraft(conv.title);
-              setRenaming(false);
-            }
-          }}
-          onBlur={commit}
-          size="xs"
-          className="h-6 flex-1 border-0 bg-transparent px-0 text-xs shadow-none focus-visible:ring-0"
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className={clsx(
-        'group/nav relative flex h-7 items-center rounded-md pr-1 text-[13px] transition-colors',
-        active ? 'bg-muted' : 'hover:bg-muted',
-        nested && 'ml-1',
-      )}
-    >
-      <button
-        type="button"
-        onClick={onSelect}
-        title={sourceLabel ? `${conv.title} · ${sourceLabel}` : conv.title}
-        className={clsx(
-          'flex min-w-0 flex-1 items-center gap-1 px-1.5 outline-none transition-colors',
-          active ? 'font-medium text-foreground' : 'font-normal text-foreground/85 group-hover/nav:text-foreground',
-        )}
-      >
-        <span className="truncate">{conv.title}</span>
-        {sourceLabel ? (
-          <span className="inline-flex h-4 shrink-0 items-center rounded border border-border/70 bg-background px-1 text-[10px] font-medium leading-none text-muted-foreground">
-            {sourceLabel}
-          </span>
-        ) : null}
-      </button>
-      <span className="shrink-0 pr-1 text-[11px] tabular-nums text-muted-foreground/70 group-hover/nav:hidden">
-        {relativeTime(conv.updatedAt)}
-      </span>
-      <div className="hidden shrink-0 items-center gap-0.5 pr-0.5 group-hover/nav:flex">
-        <RowAction
-          icon={<Pencil className="h-3 w-3" />}
-          title={t('chat.rename')}
-          onClick={() => {
-            setDraft(conv.title);
-            setRenaming(true);
-          }}
-        />
-        {onDelete ? <RowAction icon={<Trash2 className="h-3 w-3" />} title={t('common.delete')} onClick={onDelete} /> : null}
-      </div>
-    </div>
-  );
-}
-
-function conversationSourceLabel(source: string | undefined, t: ReturnType<typeof useTranslation>['t']): string | undefined {
-  if (source === 'wechat') return t('chat.source.wechat', { defaultValue: '微信' });
-  if (source === 'feishu') return t('chat.source.feishu', { defaultValue: '飞书' });
-  if (source === 'feishu-cli') return t('chat.source.feishuCli', { defaultValue: '飞书CLI' });
-  return undefined;
-}
-
-function RowAction({
-  icon,
-  title,
-  onClick,
-}: {
-  icon: ReactNode;
-  title: string;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation();
-        onClick?.();
-      }}
-      title={title}
-      className="flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground/70 transition hover:bg-background hover:text-foreground"
-    >
-      {icon}
-    </button>
-  );
-}
-
-function AccountMenu({
-  compact,
-  model,
-  active,
-  onOpenSettings,
-}: {
-  compact: boolean;
-  model: string;
-  active?: boolean;
-  onOpenSettings?: () => void;
-}) {
-  const { t } = useTranslation();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const openAbout = () => {
-    window.open(ABOUT_URL, '_blank', 'noopener,noreferrer');
-    setMenuOpen(false);
-  };
-
-  const cancelClose = () => {
-    if (closeTimer.current) {
-      clearTimeout(closeTimer.current);
-      closeTimer.current = null;
-    }
-  };
-  const scheduleClose = () => {
-    cancelClose();
-    closeTimer.current = setTimeout(() => setMenuOpen(false), 140);
-  };
-
-  useEffect(() => () => cancelClose(), []);
-
-  return (
-    <div
-      className="relative shrink-0 border-t border-border p-2.5"
-      onMouseEnter={() => {
-        cancelClose();
-        setMenuOpen(true);
-      }}
-      onMouseLeave={scheduleClose}
-    >
-      <AnimatePresence>
-        {menuOpen ? (
-          <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.98 }}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-            className={clsx(
-              'absolute z-50 w-56 overflow-hidden rounded-lg border border-border bg-popover p-1.5 shadow-lg',
-              compact ? 'bottom-2 left-full ml-2' : 'bottom-full left-2.5 right-2.5 mb-2',
-            )}
-          >
-            <MenuItem icon={<Settings className="h-4 w-4" />} label={t('account.settings')} active={active} onClick={onOpenSettings} />
-            <MenuItem icon={<Info className="h-4 w-4" />} label={t('account.about')} onClick={openAbout} />
-            <div className="px-2 pt-1 font-mono text-[10px] text-muted-foreground/70">{model}</div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-
-      <button
-        type="button"
-        onClick={() => setMenuOpen((v) => !v)}
-        className={clsx(
-          'flex w-full items-center rounded-sm text-sm transition',
-          compact ? 'h-9 justify-center' : 'gap-2.5 px-2 py-1.5',
-          menuOpen || active ? 'bg-muted' : 'hover:bg-muted',
-        )}
-        title={t('account.settings')}
-      >
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-muted text-muted-foreground">
-          <Settings className="h-4 w-4" />
-        </span>
-        {!compact ? (
-          <>
-            <span className="truncate font-medium text-foreground">{t('account.settings')}</span>
-            <MoreHorizontal className="ml-auto h-4 w-4 shrink-0 text-muted-foreground/70" />
-          </>
-        ) : null}
-      </button>
-    </div>
-  );
-}
-
-function MenuItem({
-  icon,
-  label,
-  active,
-  onClick,
-}: {
-  icon: ReactNode;
-  label: string;
-  active?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={clsx(
-        'flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-sm transition',
-        active ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-      )}
-    >
-      <span className="shrink-0">{icon}</span>
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function primarySpace(spaces: SpaceProfile[]): SpaceProfile | undefined {
-  return spaces.find((space) => space.kind === 'main') ?? spaces[0];
-}
-
-/** Compact relative time for the conversation list. */
-function relativeTime(ts: number): string {
-  const min = Math.floor((Date.now() - ts) / 60000);
-  if (min < 1) return '刚刚';
-  if (min < 60) return `${min} 分`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} 小时`;
-  const day = Math.floor(hr / 24);
-  if (day < 7) return `${day} 天`;
-  return `${Math.floor(day / 7)} 周`;
 }

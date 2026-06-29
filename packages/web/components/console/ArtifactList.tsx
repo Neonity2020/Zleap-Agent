@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { ChevronDown, Download, ExternalLink, FileText } from 'lucide-react';
-import { webApiFetch } from '../../lib/api';
+import { fetchLocalArtifactContent } from '@/lib/services';
 import { artifactPreviewNeedsText } from '../../lib/artifactPreview';
 import { isDiffResult } from '../../lib/diff';
 import type { ArtifactView } from '../../lib/types';
@@ -19,6 +20,7 @@ type RemotePreviewState =
   | { status: 'error'; message: string };
 
 export function ArtifactList({ artifacts }: { artifacts: ArtifactView[] }) {
+  const { t } = useTranslation();
   const [openId, setOpenId] = useState<number | null>(null);
   const [remotePreviews, setRemotePreviews] = useState<Record<number, RemotePreviewState>>({});
 
@@ -30,16 +32,8 @@ export function ArtifactList({ artifacts }: { artifacts: ArtifactView[] }) {
       return;
     }
     setRemotePreviews((current) => ({ ...current, [openArtifact.id]: { status: 'loading' } }));
-    void webApiFetch(`/api/artifacts/local?path=${encodeURIComponent(openPath)}`)
-      .then(async (response) => {
-        const data = (await response.json().catch(() => ({}))) as { content?: unknown; error?: unknown };
-        if (!response.ok) {
-          throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${response.status}`);
-        }
-        if (typeof data.content !== 'string') {
-          throw new Error('artifact_content_missing');
-        }
-        const content = data.content;
+    void fetchLocalArtifactContent(openPath)
+      .then((content) => {
         setRemotePreviews((current) => ({ ...current, [openArtifact.id]: { status: 'ready', content } }));
       })
       .catch((error: unknown) => {
@@ -67,28 +61,38 @@ export function ArtifactList({ artifacts }: { artifacts: ArtifactView[] }) {
           const rawHref = resolvedPath ? `/api/artifacts/local?path=${encodeURIComponent(resolvedPath)}&raw=1` : undefined;
           const open = openId === artifact.id;
           return (
-            <div key={artifact.id} className="overflow-hidden rounded border border-border bg-surface">
+            <div key={artifact.id} className="overflow-hidden rounded border border-border bg-card">
               <button
                 type="button"
                 disabled={!hasPreview}
                 onClick={() => hasPreview && setOpenId((value) => (value === artifact.id ? null : artifact.id))}
                 className={clsx(
-                  'flex w-full items-start gap-2 px-2.5 py-2.5 text-left',
-                  hasPreview ? 'hover:bg-console-screen/50' : 'cursor-default',
+                  'flex w-full items-start gap-2 px-2.5 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50',
+                  hasPreview ? 'hover:bg-card/50' : 'cursor-default',
                 )}
                 aria-expanded={open}
               >
                 <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-mono text-[13px] text-ink">{artifact.title}</div>
-                  {resolvedPath ? <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{resolvedPath}</div> : null}
+                  <div className="truncate font-mono text-xs text-foreground">{artifact.title}</div>
+                  {resolvedPath ? <div className="mt-0.5 truncate font-mono text-2xs text-muted-foreground">{resolvedPath}</div> : null}
                   <div className="mt-0.5 text-xs text-muted-foreground">{artifact.detail}</div>
-                  <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-                    <span className="rounded-sm bg-surface-2 px-1.5 py-0.5">来源 {artifact.spaceId}</span>
-                    <span className="rounded-sm bg-surface-2 px-1.5 py-0.5">
-                      写回 {artifact.kind === 'diff' ? '待应用' : artifact.path ? '文件产物' : '无'}
+                  <div className="mt-1 flex flex-wrap gap-1.5 text-2xs text-muted-foreground">
+                    <span className="rounded-sm bg-muted px-1.5 py-0.5">
+                      {t('console.artifactSource', { defaultValue: '来源 {{space}}', space: artifact.spaceId })}
                     </span>
-                    {artifact.lines ? <span className="rounded-sm bg-surface-2 px-1.5 py-0.5">{artifact.lines}</span> : null}
+                    <span className="rounded-sm bg-muted px-1.5 py-0.5">
+                      {t('console.writeBack', {
+                        defaultValue: '写回 {{state}}',
+                        state:
+                          artifact.kind === 'diff'
+                            ? t('console.writePending', { defaultValue: '待应用' })
+                            : artifact.path
+                              ? t('console.writeFile', { defaultValue: '文件产物' })
+                              : t('common.none', { defaultValue: '无' }),
+                      })}
+                    </span>
+                    {artifact.lines ? <span className="rounded-sm bg-muted px-1.5 py-0.5">{artifact.lines}</span> : null}
                   </div>
                 </div>
                 {hasPreview ? (
@@ -97,12 +101,16 @@ export function ArtifactList({ artifacts }: { artifacts: ArtifactView[] }) {
               </button>
               <div className="mx-2.5 mb-2 flex flex-wrap gap-1.5">
                 {artifact.href ? (
-                  <ArtifactAction href={artifact.href} label="打开链接" icon={<ExternalLink className="h-3 w-3" />} />
+                  <ArtifactAction
+                    href={artifact.href}
+                    label={t('console.openLink', { defaultValue: '打开链接' })}
+                    icon={<ExternalLink className="h-3 w-3" />}
+                  />
                 ) : null}
                 {rawHref ? (
                   <>
-                    <ArtifactAction href={rawHref} label="打开" icon={<ExternalLink className="h-3 w-3" />} />
-                    <ArtifactAction href={rawHref} label="下载" icon={<Download className="h-3 w-3" />} download />
+                    <ArtifactAction href={rawHref} label={t('common.open', { defaultValue: '打开' })} icon={<ExternalLink className="h-3 w-3" />} />
+                    <ArtifactAction href={rawHref} label={t('common.download', { defaultValue: '下载' })} icon={<Download className="h-3 w-3" />} download />
                   </>
                 ) : null}
               </div>
@@ -131,7 +139,7 @@ function ArtifactAction({ href, label, icon, download }: { href: string; label: 
       target={download ? undefined : '_blank'}
       rel={download ? undefined : 'noreferrer'}
       download={download}
-      className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-xs text-muted-foreground hover:text-ink"
+      className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
     >
       {icon}
       {label}
@@ -140,17 +148,26 @@ function ArtifactAction({ href, label, icon, download }: { href: string; label: 
 }
 
 function ArtifactPreview({ artifact, loading, error }: { artifact: ArtifactView; loading?: boolean; error?: string }) {
+  const { t } = useTranslation();
   if (loading) {
-    return <div className="mt-2 rounded-sm border border-border bg-surface-2 px-3 py-2 text-xs text-muted-foreground">读取产物内容...</div>;
+    return (
+      <div className="mt-2 rounded-sm border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+        {t('console.loadingArtifact', { defaultValue: '读取产物内容...' })}
+      </div>
+    );
   }
   if (error) {
-    return <div className="mt-2 rounded-sm border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-500">{error}</div>;
+    return <div className="mt-2 rounded-sm border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>;
   }
   const preview = artifact.preview ?? '';
   const path = artifact.path ?? artifact.title;
   const canRenderFromPath = Boolean(artifact.path && !artifactPreviewNeedsText(path));
   if (!preview && !canRenderFromPath) {
-    return <div className="mt-2 rounded-sm border border-border bg-surface-2 px-3 py-2 text-xs text-muted-foreground">暂无可预览内容</div>;
+    return (
+      <div className="mt-2 rounded-sm border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+        {t('console.noPreview', { defaultValue: '暂无可预览内容' })}
+      </div>
+    );
   }
   if (artifact.kind === 'diff' && isDiffResult(preview)) {
     return <DiffBlock result={preview} maxLines={ARTIFACT_PREVIEW_MAX_LINES} />;

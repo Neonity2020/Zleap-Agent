@@ -2,38 +2,44 @@
 
 import { Maximize2 } from 'lucide-react';
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { ChatImageAttachment } from '../lib/chatAttachments';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 
 export function UserMessage({ text, attachments = [] }: { text: string; attachments?: ChatImageAttachment[] }) {
+  const { t } = useTranslation();
   const [previewAttachment, setPreviewAttachment] = useState<ChatImageAttachment | null>(null);
 
   return (
     <div className="flex justify-end">
-      <div className="flex max-w-[82%] flex-col gap-2 rounded-lg rounded-br-sm bg-accent-grad px-4 py-2.5 text-[15px] leading-7 text-white shadow-sm">
+      <div className="flex max-w-[min(82%,560px)] flex-col items-end gap-2">
         {attachments.length ? (
-          <div className="grid max-w-[260px] grid-cols-2 gap-2">
+          <div className="flex max-w-[min(220px,52vw)] flex-wrap justify-end gap-1.5">
             {attachments.map((attachment) => (
               <button
                 key={attachment.id}
                 type="button"
-                aria-label={`放大图片：${attachment.name}`}
-                className="group relative aspect-square w-full cursor-zoom-in overflow-hidden rounded-md bg-black/10 p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                aria-label={t('chat.zoomImage', { defaultValue: '放大图片：{{name}}', name: attachment.name })}
+                className="group relative size-20 cursor-zoom-in overflow-hidden rounded-lg border border-border/80 bg-card p-0 shadow-sm transition hover:border-border hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
                 onClick={() => setPreviewAttachment(attachment)}
               >
                 <img
                   src={attachment.thumbnailDataUrl}
                   alt={attachment.name}
-                  className="h-full w-full object-cover transition duration-150 group-hover:scale-[1.02]"
+                  className="h-full w-full bg-muted object-cover transition duration-[var(--duration-fast)] group-hover:scale-[1.02]"
                 />
-                <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition duration-150 group-hover:bg-black/20 group-hover:opacity-100 group-focus-visible:bg-black/20 group-focus-visible:opacity-100">
+                <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition duration-[var(--duration-fast)] group-hover:bg-black/20 group-hover:opacity-100 group-focus-visible:bg-black/20 group-focus-visible:opacity-100">
                   <Maximize2 className="size-5 text-white drop-shadow" aria-hidden="true" />
                 </span>
               </button>
             ))}
           </div>
         ) : null}
-        {text ? <div className="whitespace-pre-wrap wrap-break-word">{text}</div> : null}
+        {text ? (
+          <div className="max-w-full rounded-lg rounded-br-sm bg-accent-grad px-4 py-2.5 text-sm leading-7 text-white shadow-sm whitespace-pre-wrap wrap-break-word">
+            {text}
+          </div>
+        ) : null}
       </div>
       {previewAttachment ? (
         <ImagePreviewDialog
@@ -53,16 +59,18 @@ export function ImagePreviewDialog({
   open,
   onOpenChange,
 }: {
-  attachment: ChatImageAttachment;
+  attachment: ChatImageAttachment | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  if (!attachment) return null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="grid h-[min(900px,calc(100dvh-48px))] !w-[calc(100vw-32px)] !max-w-[calc(100vw-32px)] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:!w-[calc(100vw-48px)] sm:!max-w-[min(1100px,calc(100vw-48px))]">
         <DialogHeader className="border-b border-border px-5 py-4 pr-12">
-          <DialogTitle className="truncate text-[15px]">{attachment.name}</DialogTitle>
-          <DialogDescription className="truncate text-[12px]">
+          <DialogTitle className="truncate text-sm">{attachment.name}</DialogTitle>
+          <DialogDescription className="truncate text-xs">
             {attachment.mimeType} · {formatBytes(attachment.sizeBytes)}
           </DialogDescription>
         </DialogHeader>

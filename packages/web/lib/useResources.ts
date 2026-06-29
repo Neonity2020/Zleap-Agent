@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { webApiFetch } from './api';
+import { getJson } from './api';
 
 /** A persona mask (docs/core.md §4) with optional UI preferences. */
 export type AvatarView = {
@@ -166,14 +166,14 @@ export function useResources(avatarId?: string): Resources {
     const suffix = avatarId ? `?avatarId=${encodeURIComponent(avatarId)}` : '';
     try {
       const [avatar, spaceBody, toolBody, modelBody, skillBody, mcpServerBody, mcpToolBody, projectBody] = await Promise.all([
-        jsonGet<{ avatars?: AvatarView[]; avatarId?: string; persistence?: { enabled: boolean; reachable: boolean } }>(`/api/avatar${suffix}`),
-        jsonGet<{ spaces?: SpaceProfile[] }>('/api/spaces'),
-        jsonGet<{ tools?: ToolView[]; toolSets?: ToolSetView[] }>('/api/tools'),
-        jsonGet<{ models?: ModelConfigView[] }>('/api/models'),
-        jsonGet<{ skills?: SkillView[] }>('/api/skills'),
-        jsonGet<{ servers?: McpServerView[] }>('/api/mcp/servers'),
-        jsonGet<{ tools?: McpToolView[] }>('/api/mcp/tools'),
-        jsonGet<{ projects?: ProjectView[] }>('/api/projects'),
+        getJson<{ avatars?: AvatarView[]; avatarId?: string; persistence?: { enabled: boolean; reachable: boolean } }>(`/api/avatar${suffix}`),
+        getJson<{ spaces?: SpaceProfile[] }>('/api/spaces'),
+        getJson<{ tools?: ToolView[]; toolSets?: ToolSetView[] }>('/api/tools'),
+        getJson<{ models?: ModelConfigView[] }>('/api/models'),
+        getJson<{ skills?: SkillView[] }>('/api/skills'),
+        getJson<{ servers?: McpServerView[] }>('/api/mcp/servers'),
+        getJson<{ tools?: McpToolView[] }>('/api/mcp/tools'),
+        getJson<{ projects?: ProjectView[] }>('/api/projects'),
       ]);
       setAvatars(avatar.avatars ?? []);
       setActiveAvatarId(avatar.avatarId ?? avatarId ?? 'zleap-default');
@@ -213,12 +213,4 @@ export function useResources(avatarId?: string): Resources {
     mcpTools,
     reload,
   };
-}
-
-async function jsonGet<T>(url: string): Promise<T> {
-  const response = await webApiFetch(url);
-  if (!response.ok) {
-    throw new Error(`${url}: HTTP ${response.status}`);
-  }
-  return (await response.json()) as T;
 }

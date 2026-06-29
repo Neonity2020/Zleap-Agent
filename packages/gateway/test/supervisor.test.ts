@@ -131,7 +131,7 @@ describe('ChannelSupervisor reconcile', () => {
     expect(runner.permissions.get('wechat')).toBe('full_access');
   });
 
-  it('dispatches a refresh command once per nonce, then a logout', async () => {
+  it('treats connect as idempotent and dispatches refresh once per nonce, then logout', async () => {
     const runner = new StubRunner();
     const connections = new ConnectionsService(new MemStore());
     const state = { config: { enabled: true, permissionMode: 'request_approval', rev: 1 } as TestConfig, built: [] as FakeAdapter[] };
@@ -139,6 +139,11 @@ describe('ChannelSupervisor reconcile', () => {
 
     await sup.reconcile();
     const adapter = state.built[0]!;
+
+    await connections.requestConnect('wechat');
+    await sup.reconcile();
+    expect(adapter.reauthCalls).toBe(0);
+    expect(await connections.readCommand('wechat')).toBeUndefined();
 
     await connections.requestRefresh('wechat');
     await sup.reconcile();

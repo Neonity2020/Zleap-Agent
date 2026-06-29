@@ -161,7 +161,7 @@ export class ChannelSupervisor {
       this.logger?.info('dispatching channel command', { channel, command: command.type });
       if (command.type === 'logout') {
         await (adapter.logout?.() ?? adapter.reauth?.() ?? Promise.resolve());
-      } else {
+      } else if (command.type === 'refresh') {
         await (adapter.reauth?.() ?? Promise.resolve());
       }
     }

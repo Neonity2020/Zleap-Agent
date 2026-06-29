@@ -12,7 +12,6 @@ import { DEFAULT_SPACE_ACCENT, DEFAULT_SPACE_ICON, resolveSpaceIcon } from '@/li
 import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select';
@@ -30,6 +29,7 @@ function normalizeEmojiDraft(raw: string): string | undefined {
 import { AvatarThemePicker, type AvatarThemePickerHandle } from './AvatarThemePicker';
 import { SpaceThemePicker } from './SpaceThemePicker';
 import { ToolTreeSelect } from './ToolTreeSelect';
+import { ManageField } from './manage-ui';
 
 export type EditKind = 'space' | 'avatar' | 'project';
 
@@ -74,16 +74,6 @@ function EditShell({
         {actions}
       </div>
       <div className="mx-auto max-w-2xl px-6 py-8">{children}</div>
-    </div>
-  );
-}
-
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <div className="space-y-1.5">
-      <Label>{label}</Label>
-      {children}
-      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
@@ -259,11 +249,11 @@ export function SpaceEditPage({ id, resources, avatarId, onChanged, onBack, onOp
         onConfirm={remove}
       />
       <div className="space-y-6">
-        <Field label={t('common.name')}>
+        <ManageField label={t('common.name')}>
           <Input value={label} onChange={(e) => setLabel(e.target.value)} disabled={space.kind === 'main'} />
-        </Field>
+        </ManageField>
         <SpaceThemePicker icon={icon} accent={accent} onIconChange={setIcon} onAccentChange={setAccent} />
-        <Field label={t('space.model')} hint={t('space.modelHint')}>
+        <ManageField label={t('space.model')} description={t('space.modelHint')}>
           <Select
             value={modelConfigId || DEFAULT_SPACE_MODEL_VALUE}
             onValueChange={(value) => setModelConfigId(value === DEFAULT_SPACE_MODEL_VALUE ? '' : value)}
@@ -280,13 +270,13 @@ export function SpaceEditPage({ id, resources, avatarId, onChanged, onBack, onOp
               ))}
             </SelectContent>
           </Select>
-        </Field>
-        <Field label={t('space.routing')}>
+        </ManageField>
+        <ManageField label={t('space.routing')}>
           <Input value={routing} onChange={(e) => setRouting(e.target.value)} placeholder={t('space.routingPlaceholder')} />
-        </Field>
+        </ManageField>
         {space.kind === 'main' ? null : (
           <>
-            <Field label={t('space.tools')}>
+            <ManageField label={t('space.tools')}>
               <ToolTreeSelect
                 toolSets={resources.toolSets}
                 tools={resources.tools}
@@ -299,8 +289,8 @@ export function SpaceEditPage({ id, resources, avatarId, onChanged, onBack, onOp
                   setToolIds(nextTools);
                 }}
               />
-            </Field>
-            <Field label={t('space.skills')}>
+            </ManageField>
+            <ManageField label={t('space.skills')}>
               <MultiSelect options={skillOptions} selected={skillIds} onChange={setSkillIds} placeholder={t('space.mountSkills')} emptyText={t('space.noSkills')} />
               <div className="mt-2 flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
                 <div className="min-w-0">
@@ -309,17 +299,17 @@ export function SpaceEditPage({ id, resources, avatarId, onChanged, onBack, onOp
                 </div>
                 <Switch checked={autoMountSkills} onCheckedChange={setAutoMountSkills} />
               </div>
-            </Field>
+            </ManageField>
           </>
         )}
-        <Field label={t('space.instructions')}>
+        <ManageField label={t('space.instructions')}>
           <Textarea
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
             className="min-h-[300px]"
             placeholder={t('space.instructionsPlaceholder')}
           />
-        </Field>
+        </ManageField>
       </div>
     </EditShell>
   );
@@ -457,9 +447,9 @@ export function AvatarEditPage({ id, resources, onChanged, onBack }: EditProps) 
         onConfirm={remove}
       />
       <div className="space-y-6">
-        <Field label={t('common.name')}>
+        <ManageField label={t('common.name')}>
           <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
+        </ManageField>
         <AvatarThemePicker
           commitRef={themePickerRef}
           emoji={emoji}
@@ -468,7 +458,7 @@ export function AvatarEditPage({ id, resources, onChanged, onBack }: EditProps) 
           onEmojiDraftChange={setEmojiDraft}
           onAccentChange={setAccent}
         />
-        <Field label={t('avatar.spaces')} hint={t('avatar.spacesHint')}>
+        <ManageField label={t('avatar.spaces')} description={t('avatar.spacesHint')}>
           <MultiSelect
             options={spaceOptions}
             selected={boundSpaceIds}
@@ -476,15 +466,15 @@ export function AvatarEditPage({ id, resources, onChanged, onBack }: EditProps) 
             placeholder={t('avatar.mountSpaces')}
             emptyText={t('avatar.noSpaces')}
           />
-        </Field>
-        <Field label={t('avatar.persona')} hint={t('avatar.personaHint')}>
+        </ManageField>
+        <ManageField label={t('avatar.persona')} description={t('avatar.personaHint')}>
           <Textarea
             value={personaText}
             onChange={(e) => setPersonaText(e.target.value)}
             className="min-h-[300px]"
             placeholder={t('avatar.personaPlaceholder')}
           />
-        </Field>
+        </ManageField>
       </div>
     </EditShell>
   );
@@ -611,9 +601,9 @@ export function ProjectEditPage({ id, resources, onChanged, onBack }: EditProps)
         onConfirm={remove}
       />
       <div className="space-y-6">
-        <Field label={t('common.name')}>
+        <ManageField label={t('common.name')}>
           <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
+        </ManageField>
         <AvatarThemePicker
           commitRef={themePickerRef}
           emoji={emoji}
@@ -622,20 +612,20 @@ export function ProjectEditPage({ id, resources, onChanged, onBack }: EditProps)
           onEmojiDraftChange={setEmojiDraft}
           onAccentChange={setAccent}
         />
-        <Field label={t('project.path')}>
+        <ManageField label={t('project.path')}>
           <Input value={path} onChange={(e) => setPath(e.target.value)} className="font-mono text-xs" />
-        </Field>
-        <Field label={t('project.note')}>
+        </ManageField>
+        <ManageField label={t('project.note')}>
           <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder={t('project.notePlaceholder')} />
-        </Field>
-        <Field label={t('project.spec')} hint={t('project.specHint')}>
+        </ManageField>
+        <ManageField label={t('project.spec')} description={t('project.specHint')}>
           <Textarea
             value={spec}
             onChange={(e) => setSpec(e.target.value)}
             className="min-h-[300px] font-mono text-xs leading-relaxed"
             placeholder={t('project.specPlaceholder')}
           />
-        </Field>
+        </ManageField>
       </div>
     </EditShell>
   );

@@ -129,7 +129,7 @@ export async function runDesktopBootstrap(
     const bundledRoot = options.bundledRoot ?? resolveBundledRoot();
     progress(options, 'deps', '检查运行时组件…');
     if (bundledRoot) {
-      progress(options, 'seed', '同步运行时到 ~/.zleap/app/current…');
+      progress(options, 'seed', '准备运行时…');
     }
     const reportDownload = makeDownloadReporter(options);
     const runtime = await ensureRuntimeInstalled({

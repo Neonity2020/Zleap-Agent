@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RunStatus, WorkPane } from '../../lib/types';
 import { spaceMeta, type SpaceItem } from '../../lib/spaces';
+import { IconButton } from '../ui/icon-button';
 import { WorkConsoleTabs } from './WorkConsoleTabs';
 import { WorkScreen } from './WorkScreen';
 
@@ -19,7 +20,7 @@ type WorkConsoleProps = {
   hideTabs?: boolean;
 };
 
-/** The 调度台: a "computer" window whose tabs are the spaces the kernel entered. */
+/** The dispatch console: a "computer" window whose tabs are the spaces the kernel entered. */
 export function WorkConsole({ workspaces, spaces, activeWorkspaceId, onSelect, onCollapse, hideTabs = false }: WorkConsoleProps) {
   const activeIndex = workspaces.findIndex((pane) => pane.id === activeWorkspaceId);
   const active = activeIndex >= 0 ? workspaces[activeIndex] : (workspaces[0] ?? null);
@@ -43,15 +44,15 @@ export function WorkConsole({ workspaces, spaces, activeWorkspaceId, onSelect, o
       {!hideTabs && workspaces.length ? (
         <div className="flex h-9 shrink-0 items-center border-b border-border bg-background pr-2">
           <WorkConsoleTabs spaces={spaces} workspaces={workspaces} activeWorkspaceId={effectiveActiveId} onSelect={onSelect} />
-          <button
-            type="button"
+          <IconButton
+            size="icon-xs"
             onClick={onCollapse}
-            className="ml-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-muted hover:text-ink"
+            className="ml-1.5 shrink-0 text-muted-foreground"
             title="Collapse"
             aria-label="Collapse workspace"
           >
-            <PanelRightClose className="h-3.5 w-3.5" />
-          </button>
+            <PanelRightClose className="size-3.5" />
+          </IconButton>
         </div>
       ) : null}
 
@@ -63,8 +64,8 @@ export function WorkConsole({ workspaces, spaces, activeWorkspaceId, onSelect, o
               style={{ backgroundColor: activeMeta?.accent ?? 'var(--border-strong)' }}
             />
             <div className="min-w-0 flex-1">
-              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Task</div>
-              <div className="truncate text-sm font-semibold leading-5 text-ink">
+              <div className="mb-0.5 text-2xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Task</div>
+              <div className="truncate text-sm font-semibold leading-5 text-foreground">
                 {activeTask}
               </div>
               {active?.context?.source ? <div className="mt-0.5 text-xs text-muted-foreground">from {active.context.source}</div> : null}
@@ -72,7 +73,7 @@ export function WorkConsole({ workspaces, spaces, activeWorkspaceId, onSelect, o
             <StatusBadge running={running} hasError={hasError} />
           </div>
 
-          {/* No per-run stats here: the 调度台 is a REUSED pane (复用) — a tab shared
+          {/* No per-run stats here: the dispatch console is a REUSED pane — a tab shared
               across dispatches to the same space, so an aggregate count/elapsed is
               meaningless. Per-dispatch stats live on each conversation card. */}
         </div>
@@ -95,14 +96,14 @@ function StatusBadge({ running, hasError }: { running: boolean; hasError: boolea
   }
   if (hasError) {
     return (
-      <span className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-rose-500/10 px-2 py-0.5 text-xs text-rose-500">
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-destructive/10 px-2 py-0.5 text-xs text-destructive">
         <AlertCircle className="h-3 w-3" />
         {t('workspace.statusError')}
       </span>
     );
   }
   return (
-    <span className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-500">
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-success/10 px-2 py-0.5 text-xs text-success">
       <CheckCircle2 className="h-3 w-3" />
       {t('workspace.statusDone')}
     </span>

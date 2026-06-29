@@ -114,15 +114,19 @@ async function syncResources(env = process.env) {
   if (!existsSync(join(payloadDir, 'manifest.json'))) {
     throw new Error(`Desktop payload missing: ${payloadDir}\nRun: pnpm desktop:package`);
   }
+  const fat = env.ZLEAP_DESKTOP_EMBED_PAYLOAD === '1';
   await run(process.execPath, [
     join(REPO_ROOT, 'scripts/prepare-desktop-resources.mjs'),
     tag,
     '--out',
     RESOURCES_DIR,
+    ...(fat ? ['--mode', 'fat'] : []),
   ], env);
   await assertNoExpandedAppResource();
   await run(process.execPath, [join(REPO_ROOT, 'tests/smoke-desktop-resources.mjs'), RESOURCES_DIR]);
-  process.stdout.write(`Embedded slim desktop resources → ${RESOURCES_DIR}\n`);
+  process.stdout.write(
+    `Embedded ${fat ? 'fat (self-contained)' : 'slim'} desktop resources → ${RESOURCES_DIR}\n`,
+  );
 }
 
 async function resolveDesktopPayloadDir(env = process.env) {

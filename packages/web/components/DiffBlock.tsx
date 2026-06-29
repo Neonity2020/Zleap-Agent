@@ -9,8 +9,8 @@ function DiffRow({ row }: { row: string }) {
     <div
       className={clsx(
         'whitespace-pre',
-        marker === '+' && 'bg-emerald-500/10 text-emerald-500',
-        marker === '-' && 'bg-rose-500/10 text-rose-500',
+        marker === '+' && 'bg-success/10 text-success',
+        marker === '-' && 'bg-destructive/10 text-destructive',
         marker !== '+' && marker !== '-' && 'text-muted-foreground',
       )}
     >
@@ -27,10 +27,10 @@ export function DiffBlock({ result, maxLines = DIFF_MAX_LINES }: { result: strin
 
   return (
     <div className="mt-2 overflow-hidden rounded-sm border border-border">
-      <div className="border-b border-border bg-surface-2 px-3 py-1.5 font-mono text-xs font-medium text-emerald-500">
+      <div className="border-b border-border bg-muted px-3 py-1.5 font-mono text-xs font-medium text-success">
         {summary}
       </div>
-      <div className="overflow-x-auto px-3 py-2 font-mono text-[13px] leading-6">
+      <div className="overflow-x-auto px-3 py-2 font-mono text-xs leading-6">
         {shown.map((row, index) => (
           <DiffRow key={index} row={row} />
         ))}

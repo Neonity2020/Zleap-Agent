@@ -1,112 +1,141 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 import { slugify } from '@/lib/utils';
-import { postJson } from '@/lib/api';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
+import { patchJson, postJson } from '@/lib/api';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { DEFAULT_AVATAR_ACCENT } from '@/lib/avatars';
+import { DEFAULT_AVATAR_ACCENT, parseAvatarTheme } from '@/lib/avatars';
+import { boundSpaceIdsFromMetadata, boundSpaceIdsMetadataPatch } from '@/lib/avatarSpaceBindings';
+import type { AvatarView, Resources } from '@/lib/useResources';
+import { useEntityFormDialog } from '@/hooks/useEntityFormDialog';
+import { ManageDialog, ManageDialogFooterActions, ManageField, ManageForm } from './manage-ui';
 import { AvatarThemePicker } from './AvatarThemePicker';
+import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select';
 
 type AvatarDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  editTarget?: AvatarView | null;
+  resources?: Resources;
   onSaved: (avatarId?: string) => void;
 };
+
+type AvatarForm = { name: string; emoji?: string; accent: string; persona: string; boundSpaceIds: string[] };
 
 /** Create a new Avatar — a persona mask. It only overrides the identity segment
  *  of the system prompt; it owns no spaces, tools, or memory. The id is derived
  *  from the name (store-owned), never hand-typed. */
-export function AvatarDialog({ open, onOpenChange, onSaved }: AvatarDialogProps) {
+export function AvatarDialog({ open, onOpenChange, editTarget, resources, onSaved }: AvatarDialogProps) {
   const { t } = useTranslation();
-  const [name, setName] = useState('');
-  const [emoji, setEmoji] = useState<string | undefined>();
-  const [accent, setAccent] = useState(DEFAULT_AVATAR_ACCENT);
-  const [persona, setPersona] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    setName('');
-    setEmoji(undefined);
-    setAccent(DEFAULT_AVATAR_ACCENT);
-    setPersona('');
-  }, [open]);
-
-  const submit = async () => {
-    const id = slugify(name);
-    if (!name.trim() || !id) {
-      toast.error(t('common.required'));
-      return;
-    }
-    setBusy(true);
-    try {
+  const editing = Boolean(editTarget);
+  const spaceOptions: MultiSelectOption[] = useMemo(
+    () =>
+      (resources?.spaces ?? []).map((space) => ({
+        value: space.id,
+        label: space.label,
+        hint: space.kind === 'main' ? 'Main' : space.id,
+      })),
+    [resources?.spaces],
+  );
+  const { values, patch, busy, submit } = useEntityFormDialog<AvatarForm>({
+    open,
+    initial: () => {
+      const theme = parseAvatarTheme(editTarget?.metadata);
+      return {
+        name: editTarget?.name ?? '',
+        emoji: theme.emoji,
+        accent: theme.accent ?? DEFAULT_AVATAR_ACCENT,
+        persona: editTarget?.persona ?? '',
+        boundSpaceIds: boundSpaceIdsFromMetadata(editTarget?.metadata) ?? [],
+      };
+    },
+    onSubmit: async (form) => {
+      const trimmedName = form.name.trim();
+      if (!trimmedName) throw new Error(t('common.required'));
+      if (editTarget) {
+        await patchJson('/api/avatar', {
+          id: editTarget.id,
+          name: trimmedName,
+          persona: form.persona.trim() || undefined,
+          metadata: { emoji: form.emoji ?? '', accent: form.accent, ...boundSpaceIdsMetadataPatch(form.boundSpaceIds) },
+        });
+        toast.success(`${trimmedName} ✓`);
+        onSaved(editTarget.id);
+        return;
+      }
+      const id = slugify(trimmedName);
+      if (!id) throw new Error(t('common.required'));
       const data = (await postJson('/api/avatar', {
         id,
-        name: name.trim(),
-        persona: persona.trim() || undefined,
-        metadata: { emoji: emoji ?? '', accent },
+        name: trimmedName,
+        persona: form.persona.trim() || undefined,
+        metadata: { emoji: form.emoji ?? '', accent: form.accent, ...boundSpaceIdsMetadataPatch(form.boundSpaceIds) },
       })) as { profile?: { id: string } };
-      toast.success(`${name} ✓`);
+      toast.success(`${form.name} ✓`);
       onSaved(data.profile?.id);
-      onOpenChange(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+    },
+    onSuccess: () => onOpenChange(false),
+  });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{t('avatar.new')}</DialogTitle>
-          <DialogDescription>{t('avatar.newDesc')}</DialogDescription>
-        </DialogHeader>
+    <ManageDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      expandable
+      title={editing ? t('avatar.editTitle') : t('avatar.new')}
+      description={editing ? t('avatar.editDesc', { defaultValue: '更新助手的人格、图标和空间绑定。' }) : t('avatar.newDesc')}
+      footer={
+        <ManageDialogFooterActions
+          onCancel={() => onOpenChange(false)}
+          onConfirm={() => void submit()}
+          confirmLabel={editing ? t('common.saveChanges') : t('common.create')}
+          busy={busy}
+        />
+      }
+    >
+      <ManageForm>
+        <ManageField label={t('common.name')} htmlFor="avatar-name">
+          <Input
+            id="avatar-name"
+            value={values.name}
+            onChange={(e) => patch({ name: e.target.value })}
+            placeholder="Researcher"
+            autoFocus
+          />
+        </ManageField>
 
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="avatar-name">{t('common.name')}</Label>
-            <Input id="avatar-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Researcher" autoFocus />
-          </div>
+        <AvatarThemePicker
+          emoji={values.emoji}
+          accent={values.accent}
+          onEmojiChange={(emoji) => patch({ emoji })}
+          onAccentChange={(accent) => patch({ accent })}
+        />
 
-          <AvatarThemePicker emoji={emoji} accent={accent} onEmojiChange={setEmoji} onAccentChange={setAccent} />
-
-          <div className="space-y-1.5">
-            <Label htmlFor="avatar-persona">{t('avatar.persona')}</Label>
-            <Textarea
-              id="avatar-persona"
-              value={persona}
-              onChange={(e) => setPersona(e.target.value)}
-              rows={6}
-              placeholder={t('avatar.personaPlaceholder')}
+        {resources ? (
+          <ManageField label={t('avatar.spaces', { defaultValue: '绑定空间' })} description={t('avatar.spacesHint')}>
+            <MultiSelect
+              options={spaceOptions}
+              selected={values.boundSpaceIds}
+              onChange={(boundSpaceIds) => patch({ boundSpaceIds })}
+              placeholder={t('avatar.mountSpaces')}
+              emptyText={t('avatar.noSpaces')}
             />
-            <p className="text-xs text-muted-foreground">{t('avatar.personaHint')}</p>
-          </div>
-        </div>
+          </ManageField>
+        ) : null}
 
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            {t('common.cancel')}
-          </Button>
-          <Button onClick={submit} disabled={busy}>
-            {t('common.create')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <ManageField label={t('avatar.persona')} htmlFor="avatar-persona" description={t('avatar.personaHint')}>
+          <Textarea
+            id="avatar-persona"
+            value={values.persona}
+            onChange={(e) => patch({ persona: e.target.value })}
+            rows={6}
+            placeholder={t('avatar.personaPlaceholder')}
+          />
+        </ManageField>
+      </ManageForm>
+    </ManageDialog>
   );
 }

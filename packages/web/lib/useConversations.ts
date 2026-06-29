@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { webApiFetch } from './api';
+import { patchJson, webApiFetch } from './api';
 import { clearAllComposerDrafts, clearComposerDraft } from './composerDrafts';
 import { normalizeDisplayMessages } from './displayMessages';
 import type { DisplayMessage, WorkPane } from './types';
@@ -62,10 +62,17 @@ function writeList(list: Conversation[]): void {
 export type ConversationsApi = {
   /** Started conversations, most-recent-first. */
   conversations: Conversation[];
+  /** Archived conversations (status='archived'), most-recent-first. */
+  archivedConversations: Conversation[];
   /** Add a conversation (with a caller-supplied id) to the list if not present.
    *  The active conversation id is owned by the page, not here. */
   ensure: (id: string, agentId: string, projectId?: string) => void;
+  /** Hard-remove a conversation locally (used for permanent delete from the archive). */
   remove: (id: string) => void;
+  /** Archive: PATCH status='archived' + local flag; it leaves the active list. */
+  archive: (id: string) => void;
+  /** Restore an archived conversation back to active. */
+  unarchive: (id: string) => void;
   /** Bump updatedAt and, if still untitled, set the title from the first message. */
   touch: (id: string, titleSeed?: string) => void;
   /** Rename a conversation (and mark it user-titled so auto-title won't override). */
@@ -157,6 +164,22 @@ export function useConversations(defaultAgentId: string): ConversationsApi {
     [persist],
   );
 
+  const archive = useCallback(
+    (id: string) => {
+      persist(readList().map((c) => (c.id === id ? { ...c, archived: true } : c)));
+      void patchJson('/api/chat/conversation', { conversationId: id, status: 'archived' }).catch(() => undefined);
+    },
+    [persist],
+  );
+
+  const unarchive = useCallback(
+    (id: string) => {
+      persist(readList().map((c) => (c.id === id ? { ...c, archived: false, updatedAt: Date.now() } : c)));
+      void patchJson('/api/chat/conversation', { conversationId: id, status: 'active' }).catch(() => undefined);
+    },
+    [persist],
+  );
+
   const touch = useCallback(
     (id: string, titleSeed?: string) => {
       persist(
@@ -228,11 +251,15 @@ export function useConversations(defaultAgentId: string): ConversationsApi {
 
   const started = list.filter(isStartedConversation);
   const visible = started.filter((c) => !c.archived).sort((a, b) => b.updatedAt - a.updatedAt);
+  const archivedConversations = started.filter((c) => c.archived).sort((a, b) => b.updatedAt - a.updatedAt);
 
   return {
     conversations: visible,
+    archivedConversations,
     ensure,
     remove,
+    archive,
+    unarchive,
     touch,
     rename,
     updateContext,

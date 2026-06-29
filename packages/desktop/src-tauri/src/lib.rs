@@ -10,6 +10,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder,
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
@@ -92,6 +93,7 @@ struct ServeState {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             retry_bootstrap,
@@ -101,8 +103,9 @@ pub fn run() {
         .setup(|app| {
             open_splash_window(app.handle())?;
             spawn_bootstrap(app.handle().clone());
-            spawn_shell_update_check(app.handle().clone());
             setup_tray(app.handle())?;
+            #[cfg(target_os = "macos")]
+            install_app_menu(app)?;
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -114,32 +117,215 @@ pub fn run() {
         });
 }
 
-fn spawn_shell_update_check(app: AppHandle) {
+/// Standard update flow. `interactive` = triggered by the user (menu/tray): always
+/// reports the outcome (up to date / error). `interactive=false` = the silent
+/// launch check: only surfaces a prompt when a newer version actually exists.
+fn check_for_update(app: &AppHandle, interactive: bool) {
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let Ok(updater) = app.updater() else {
-            return;
+        let updater = match app.updater() {
+            Ok(updater) => updater,
+            Err(error) => {
+                if interactive {
+                    app.dialog()
+                        .message(format!("更新组件不可用：{error}"))
+                        .title("Zleap 更新")
+                        .kind(MessageDialogKind::Error)
+                        .blocking_show();
+                }
+                return;
+            }
         };
-        let Ok(Some(update)) = updater.check().await else {
-            return;
-        };
-        eprintln!("Zleap desktop shell update available: {}", update.version);
-        stop_all_services(&app);
-        let installed = update
-            .download_and_install(
-                |_chunk_length, _content_length| {},
-                || {
-                    eprintln!("Zleap desktop shell update downloaded");
-                },
-            )
-            .await;
-        match installed {
-            Ok(_) => {
-                eprintln!("Zleap desktop shell update installed; restarting");
-                app.restart();
+
+        match updater.check().await {
+            Ok(Some(update)) => {
+                let proceed = app
+                    .dialog()
+                    .message(format!(
+                        "发现新版本 v{}（当前 v{}）。\n是否现在下载并安装更新？完成后应用会自动重启。",
+                        update.version, update.current_version
+                    ))
+                    .title("Zleap 有可用更新")
+                    .kind(MessageDialogKind::Info)
+                    .buttons(MessageDialogButtons::OkCancelCustom(
+                        "立即更新".to_string(),
+                        "稍后".to_string(),
+                    ))
+                    .blocking_show();
+                if proceed {
+                    perform_update(&app, update).await;
+                }
+            }
+            Ok(None) => {
+                if interactive {
+                    app.dialog()
+                        .message("当前已是最新版本。")
+                        .title("Zleap 更新")
+                        .kind(MessageDialogKind::Info)
+                        .blocking_show();
+                }
             }
             Err(error) => {
-                eprintln!("Zleap desktop shell update failed: {error}");
+                if interactive {
+                    app.dialog()
+                        .message(format!(
+                            "检查更新失败：{error}\n请稍后重试，或前往官网下载最新安装包。"
+                        ))
+                        .title("Zleap 更新")
+                        .kind(MessageDialogKind::Error)
+                        .blocking_show();
+                }
             }
+        }
+    });
+}
+
+/// Download + install a confirmed update, surfacing progress on the splash window.
+/// Services are only stopped once the download succeeds, so a failed/cancelled
+/// download leaves the running app fully intact.
+async fn perform_update(app: &AppHandle, update: tauri_plugin_updater::Update) {
+    show_progress_splash(app);
+    set_splash_hint(app, "正在下载更新，请保持网络连接，勿关闭窗口。");
+    set_splash_progress(app, 0, "正在下载更新…");
+
+    let reporter = app.clone();
+    let mut downloaded: u64 = 0;
+    let result = update
+        .download_and_install(
+            move |chunk, total| {
+                downloaded = downloaded.saturating_add(chunk as u64);
+                let mb = |bytes: u64| (bytes as f64 / 1_048_576.0).round() as u64;
+                match total {
+                    Some(total) if total > 0 => {
+                        let pct = ((downloaded.min(total) as f64 / total as f64) * 100.0) as u8;
+                        set_splash_progress(
+                            &reporter,
+                            pct,
+                            &format!("正在下载更新 {pct}%（{}/{} MB）", mb(downloaded), mb(total)),
+                        );
+                    }
+                    _ => set_splash_progress(
+                        &reporter,
+                        0,
+                        &format!("正在下载更新 {} MB…", mb(downloaded)),
+                    ),
+                }
+            },
+            || {},
+        )
+        .await;
+
+    match result {
+        Ok(_) => {
+            stop_all_services(app);
+            set_splash_progress(app, 100, "更新完成，正在重启…");
+            app.restart();
+        }
+        Err(error) => {
+            if let Some(splash) = app.get_webview_window("splash") {
+                let _ = splash.close();
+            }
+            app.dialog()
+                .message(format!(
+                    "更新安装失败：{error}\n你可以前往官网下载最新安装包手动更新。"
+                ))
+                .title("Zleap 更新")
+                .kind(MessageDialogKind::Error)
+                .blocking_show();
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn install_app_menu(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{AboutMetadata, PredefinedMenuItem, Submenu};
+
+    let about_metadata = AboutMetadata {
+        name: Some("Zleap".to_string()),
+        version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        ..Default::default()
+    };
+    let check_update = MenuItem::with_id(app, "check_update", "检查更新…", true, None::<&str>)?;
+    let app_submenu = Submenu::with_items(
+        app,
+        "Zleap",
+        true,
+        &[
+            &PredefinedMenuItem::about(app, Some("关于 Zleap"), Some(about_metadata))?,
+            &check_update,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::show_all(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, None)?,
+        ],
+    )?;
+    // Keep a standard Edit menu so copy/paste/select-all keyboard shortcuts work
+    // inside the web app webview (a custom menu replaces the macOS default).
+    let edit_submenu = Submenu::with_items(
+        app,
+        "编辑",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )?;
+    let menu = Menu::with_items(app, &[&app_submenu, &edit_submenu])?;
+    app.set_menu(menu)?;
+    app.on_menu_event(|app, event| {
+        if event.id().as_ref() == "check_update" {
+            check_for_update(app, true);
+        }
+    });
+    Ok(())
+}
+
+// Window create / show / eval must happen on the main thread (AppKit requirement);
+// the updater download progress runs on a worker thread, so dispatch via the app.
+fn show_progress_splash(app: &AppHandle) {
+    let app = app.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        if let Some(splash) = app.get_webview_window("splash") {
+            let _ = splash.show();
+            let _ = splash.set_focus();
+        } else {
+            let _ = open_splash_window(&app);
+        }
+    });
+}
+
+fn set_splash_progress(app: &AppHandle, pct: u8, message: &str) {
+    let app = app.clone();
+    let message = message.to_string();
+    let _ = app.clone().run_on_main_thread(move || {
+        if let Some(win) = app.get_webview_window("splash") {
+            let script = format!(
+                "window.__zleapSetProgress && window.__zleapSetProgress({}, {:?});",
+                pct, message
+            );
+            let _ = win.eval(&script);
+        }
+    });
+}
+
+fn set_splash_hint(app: &AppHandle, text: &str) {
+    let app = app.clone();
+    let text = text.to_string();
+    let _ = app.clone().run_on_main_thread(move || {
+        if let Some(win) = app.get_webview_window("splash") {
+            let _ = win.eval(&format!(
+                "window.__zleapSetHint && window.__zleapSetHint({:?});",
+                text
+            ));
         }
     });
 }
@@ -191,6 +377,9 @@ fn finish_bootstrap(app: &AppHandle, result: Result<String, String>) {
         Ok(url) => {
             *BOOTSTRAP_ERROR.lock().unwrap() = None;
             let _ = open_main_window(app, &url);
+            // Standard flow: once the app is up, silently check for a newer version and
+            // only prompt the user if one exists (no nagging when already up to date).
+            check_for_update(app, false);
         }
         Err(message) => {
             eprintln!("Zleap desktop bootstrap failed: {message}");
@@ -436,6 +625,17 @@ fn update_splash_step(app: &AppHandle, step: &str, message: &str) {
     }
 }
 
+/// Push a splash step from a worker thread (e.g. the bootstrap thread, before the
+/// node child starts streaming progress). eval must run on the main thread.
+fn emit_splash_step(app: &AppHandle, step: &str, message: &str) {
+    let ui = app.clone();
+    let step = step.to_string();
+    let message = message.to_string();
+    let _ = ui.clone().run_on_main_thread(move || {
+        update_splash_step(&ui, &step, &message);
+    });
+}
+
 fn stop_all_services(app: &AppHandle) {
     if !desktop_owns_runtime_session() {
         return;
@@ -537,6 +737,11 @@ fn prepare_runtime_root(app: &AppHandle) -> Result<PathBuf, String> {
     let seed = resolve_bundled_seed_archive(app);
     if let Some(seed_archive) = seed.as_ref() {
         if should_install_seed(app, &current)? {
+            // Self-contained installer: this unpacks the embedded ~880MB payload and is
+            // the longest step of a first launch. It runs on the bootstrap thread before
+            // node starts streaming progress, so surface it to the splash directly —
+            // otherwise the window looks frozen on "初始化环境" for the whole extraction.
+            emit_splash_step(app, "seed", "首次启动：正在本地解压运行时（约 30–60 秒，无需联网）…");
             return install_seed_archive(seed_archive);
         }
     }
@@ -546,6 +751,7 @@ fn prepare_runtime_root(app: &AppHandle) -> Result<PathBuf, String> {
     }
 
     if let Some(seed_archive) = seed {
+        emit_splash_step(app, "seed", "正在本地解压运行时（无需联网）…");
         return install_seed_archive(&seed_archive);
     }
 
@@ -1097,8 +1303,9 @@ fn platform_tag() -> &'static str {
 
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "打开 Zleap", true, None::<&str>)?;
+    let check_update = MenuItem::with_id(app, "check_update", "检查更新…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &check_update, &quit])?;
     TrayIconBuilder::new()
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -1108,6 +1315,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                     let _ = win.set_focus();
                 }
             }
+            "check_update" => check_for_update(app, true),
             "quit" => {
                 stop_all_services(app);
                 app.exit(0);

@@ -315,19 +315,6 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-      - name: Stage slim desktop resources
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/prepare-desktop-resources.mjs ${{ matrix.platform }} --out dist/app/upload/desktop-resources
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: app-${{ matrix.platform }}
-          path: dist/app/upload/desktop-resources/**
-          if-no-files-found: error
-          compression-level: 0
-
       - uses: actions/upload-artifact@v4
         with:
           name: payload-${{ matrix.platform }}
@@ -553,20 +540,16 @@ jobs:
       - name: Download desktop app payload
         uses: actions/download-artifact@v4
         with:
-          name: app-${{ matrix.platform }}
-          path: dist/app/upload
+          name: payload-${{ matrix.platform }}
+          path: dist/payload/${{ matrix.platform }}/payload
 
-      - name: Embed slim desktop resources
+      - name: Embed fat (self-contained) desktop resources
         shell: bash
         run: |
           set -euo pipefail
           rm -rf packages/desktop/src-tauri/resources
-          mkdir -p packages/desktop/src-tauri/resources
-          SRC="dist/app/upload/desktop-resources"
-          if [ ! -d "$SRC" ]; then
-            SRC="dist/app/upload"
-          fi
-          cp -R "$SRC"/. packages/desktop/src-tauri/resources/
+          node scripts/prepare-desktop-resources.mjs ${{ matrix.platform }} \
+            --mode fat --out packages/desktop/src-tauri/resources
 
       - name: Render desktop frontend
         shell: bash
@@ -715,14 +698,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist/release-assets
-          # Publish only end-user deliverables: desktop installers/updater (uploaded
-          # by tauri-action), the fresh-install payload, the in-place upgrade runtime,
-          # the managed Postgres bundle, and the signed install manifest + checksums.
-          # npm packages live on the npm registry (not duplicated here), and the
-          # *-bundle.env(.sha256) files are CI-internal build descriptors.
-          find dist/upload dist/postgres/upload -type f \
-            ! -name 'postgres-bundle.env' \
-            ! -name 'postgres-bundle.env.sha256' \
+          # Curated, minimal end-user release. The desktop installers are now FULLY
+          # self-contained (the full payload is embedded by the tauri job), so first
+          # launch never downloads. The page deliberately carries only:
+          #   - desktop installers + Tauri updater (uploaded directly by tauri-action)
+          #   - zleap-payload-*.tar.gz  → required by the @zleap-ai/cli npm first-run
+          #   - install-manifest.json   → CLI/runtime install contract (RSA-signed)
+          #   - SHA256SUMS              → checksums over the above
+          # Dropped as redundant: zleap-runtime-* (in-place upgrade tar; CLI re-seeds
+          # from payload) and zleap-postgres-* (already contained inside the payload).
+          # npm packages live on the npm registry; *-bundle.env(.sha256) are CI-internal.
+          find dist/upload -type f \
+            ! -name 'zleap-runtime-*' \
             ! -name 'node-bundle.env' \
             ! -name 'node-bundle.env.sha256' \
             -exec cp {} dist/release-assets/ \;
@@ -755,3 +742,62 @@ jobs:
               release_id: release.id,
               draft: false,
             });
+
+  # Post-release smoke: exercise the REAL user-facing fetch paths against the just-
+  # published release, closing the gap that local smoke tests use file:// fixtures and
+  # never hit the live 'latest' redirect, signature chain, or npm registry.
+  verify-release:
+    needs: [release, publish-npm]
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && !cancelled() && needs.release.result == 'success' && needs.publish-npm.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Verify signed install manifest via the published 'latest' redirect
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Render the install-manifest URL from distribution.json (same source the
+          # install.sh / npm first-run paths use).
+          URL="$(node -e "const d=require('./distribution.json');const r=d.release.installManifestUrl;process.stdout.write(r.replace('{owner}',d.github.owner).replace('{repo}',d.github.repo).replace('{manifestFile}','install-manifest.json'))")"
+          echo "install-manifest: $URL"
+          curl -fSL --retry 6 --retry-delay 10 -o install-manifest.json "$URL"
+          curl -fSL --retry 6 --retry-delay 10 -o install-manifest.json.sig "$URL.sig"
+          # Verify the RSA-SHA256 signature exactly as install.sh does: the .sig is
+          # base64, the public key is committed (base64 PEM) in distribution.json.
+          base64 -d install-manifest.json.sig > install-manifest.json.sig.bin
+          node -e "const d=require('./distribution.json');let k=d.updater.manifestPublicKey.trim();let pem=k.includes('BEGIN PUBLIC KEY')?k.replace(/\\\\n/g,String.fromCharCode(10)):Buffer.from(k,'base64').toString('utf8');require('fs').writeFileSync('manifest-pub.pem',pem)"
+          openssl dgst -sha256 -verify manifest-pub.pem -signature install-manifest.json.sig.bin install-manifest.json
+          MANIFEST_VERSION="$(node -p "require('./install-manifest.json').version")"
+          if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
+            echo "install-manifest version $MANIFEST_VERSION != tag $VERSION" >&2
+            exit 1
+          fi
+          for p in mac-arm64 win-x64; do
+            ASSET="$(node -e "const m=require('./install-manifest.json');process.stdout.write(m.payload.platforms['$p'].url)")"
+            echo "HEAD payload[$p]: $ASSET"
+            curl -fSIL --retry 6 --retry-delay 10 -o /dev/null "$ASSET"
+          done
+          echo "Signed install manifest + payload URLs OK for v$VERSION"
+
+      - name: Verify @zleap-ai/cli is published and resolvable on npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          for attempt in 1 2 3 4 5 6; do
+            PUBLISHED="$(npm view "@zleap-ai/cli@$VERSION" version 2>/dev/null || true)"
+            if [ "$PUBLISHED" = "$VERSION" ]; then
+              echo "@zleap-ai/cli@$VERSION resolvable on npm"
+              exit 0
+            fi
+            echo "npm registry not propagated yet (attempt $attempt); retrying in 15s..."
+            sleep 15
+          done
+          echo "@zleap-ai/cli@$VERSION not resolvable on npm after retries" >&2
+          exit 1

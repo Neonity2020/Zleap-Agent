@@ -45,3 +45,13 @@ async function send(method: string, url: string, body?: unknown): Promise<unknow
 export const postJson = (url: string, body: unknown) => send('POST', url, body);
 export const patchJson = (url: string, body: unknown) => send('PATCH', url, body);
 export const deleteJson = (url: string, body?: unknown) => send('DELETE', url, body);
+
+/** GET + parse JSON, throwing the server `error` on non-2xx (mirrors `send`). */
+export async function getJson<T = unknown>(url: string, init?: RequestInit): Promise<T> {
+  const response = await webApiFetch(url, init);
+  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    throw new Error(typeof data.error === 'string' ? data.error : `${url}: HTTP ${response.status}`);
+  }
+  return data as T;
+}

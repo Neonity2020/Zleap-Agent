@@ -5,13 +5,16 @@
   "type": "module",
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\" && next build",
-    "check": "tsc -p tsconfig.json --noEmit",
+    "check": "node ../../scripts/check-web-design-tokens.mjs && tsc -p tsconfig.json --noEmit",
+    "check:design": "node ../../scripts/check-web-design-tokens.mjs",
     "dev": "node ../../scripts/dev-web.mjs",
     "dev:next": "next dev",
     "start": "next start",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@iconify-json/vscode-icons": "^1.2.63",
+    "@iconify/react": "^6.0.2",
     "@zleap/agent": "workspace:*",
     "@zleap/ai": "workspace:*",
     "@zleap/avatar": "workspace:*",

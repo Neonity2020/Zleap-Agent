@@ -138,7 +138,7 @@ export async function ensureAvatar(store: ZleapStore, avatarId: string | undefin
 /** Every global space (docs/core.md §3) with its mounts — not scoped to an avatar. */
 export async function listSpaceProfiles(store: ZleapStore | null): Promise<SpaceProfile[]> {
   if (!store) {
-    return createDefaultSuperAgentSeed().spaces.map(({ space, version, bindings }) => {
+    return sortSpaceProfiles(createDefaultSuperAgentSeed().spaces.map(({ space, version, bindings }) => {
       const toolIds = bindings.filter((b) => b.capabilityType === 'tool').map((b) => b.capabilityId).filter(isSupportedBuiltinToolId);
       const capabilities = bindings
         .map((b) => ({ type: b.capabilityType, id: b.capabilityId, version: b.capabilityVersion }))
@@ -164,7 +164,7 @@ export async function listSpaceProfiles(store: ZleapStore | null): Promise<Space
         autoMountSkills: metadata.autoMountSkills,
         capabilities,
       };
-    });
+    }));
   }
   await seedSuperAgentDefaults(store, { avatarId: DEFAULT_AVATAR_ID });
   const records = await store.spaces.listSpaces({ status: 'active' });
@@ -199,7 +199,18 @@ export async function listSpaceProfiles(store: ZleapStore | null): Promise<Space
       capabilities,
     });
   }
-  return out;
+  return sortSpaceProfiles(out);
+}
+
+function sortSpaceProfiles(spaces: SpaceProfile[]): SpaceProfile[] {
+  return spaces
+    .map((space, index) => ({ space, index }))
+    .sort((a, b) => spaceSortRank(a.space) - spaceSortRank(b.space) || a.index - b.index)
+    .map(({ space }) => space);
+}
+
+function spaceSortRank(space: Pick<SpaceProfile, 'kind'>): number {
+  return space.kind === 'main' ? 0 : 1;
 }
 
 /* ── writes (direct store) ───────────────────────────────────────────── */

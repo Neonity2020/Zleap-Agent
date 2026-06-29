@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChevronDown, ExternalLink, FileText, Loader2 } from 'lucide-react';
 import { artifactContentType, artifactPreviewKind, artifactPreviewNeedsText, fileExtension } from '../lib/artifactPreview';
 import { webApiFetch } from '../lib/api';
@@ -30,6 +31,7 @@ export function ArtifactAttachmentList({
   artifacts: ArtifactView[];
   onOpenWorkspaceFile?: (target: WorkspaceFileTarget) => void;
 }) {
+  const { t } = useTranslation();
   const visibleArtifacts = dedupeArtifacts(artifacts).filter(isVisibleArtifact);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const [previews, setPreviews] = useState<Record<string, PreviewState>>({});
@@ -45,7 +47,7 @@ export function ArtifactAttachmentList({
       return;
     }
     setPreviewKey(key);
-    await loadArtifactContent(artifact, key, previews, setPreviews).catch(() => undefined);
+    await loadArtifactContent(artifact, key, previews, setPreviews, t).catch(() => undefined);
   };
 
   const openInNewTab = async (artifact: ArtifactView, key: string) => {
@@ -53,7 +55,7 @@ export function ArtifactAttachmentList({
       window.open(artifact.href, '_blank', 'noopener,noreferrer');
       return;
     }
-    const content = await loadArtifactContent(artifact, key, previews, setPreviews).catch(() => undefined);
+    const content = await loadArtifactContent(artifact, key, previews, setPreviews, t).catch(() => undefined);
     if (!content) {
       return;
     }
@@ -72,29 +74,31 @@ export function ArtifactAttachmentList({
           const key = artifactKey(artifact);
           const localPath = artifactLocalPath(artifact);
           const canPreview = Boolean(localPath || artifact.preview);
-          const previewLabel = localPath && onOpenWorkspaceFile ? '在文件中打开' : '预览';
+          const previewLabel = localPath && onOpenWorkspaceFile
+            ? t('artifactList.openInFile', { defaultValue: '在文件中打开' })
+            : t('artifactList.preview', { defaultValue: '预览' });
           return (
-            <Item key={key} variant="outline" size="xs" className="max-w-xl bg-surface shadow-xs">
+            <Item key={key} variant="outline" size="xs" className="max-w-xl bg-card shadow-xs">
               <button
                 type="button"
                 disabled={!canPreview}
                 onClick={() => void openPreview(artifact, key)}
                 className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-default"
-                aria-label={canPreview ? `预览 ${artifact.title}` : artifact.title}
+                aria-label={canPreview ? t('artifactList.previewAria', { defaultValue: '预览 {{title}}', title: artifact.title }) : artifact.title}
               >
                 <ItemMedia variant="image" className="bg-muted text-muted-foreground">
                   <FileText />
                 </ItemMedia>
                 <ItemContent className="min-w-0">
-                  <ItemTitle className="max-w-full truncate text-[13px]">{artifact.title}</ItemTitle>
-                  <ItemDescription className="truncate text-xs">{artifactSubtitle(artifact)}</ItemDescription>
+                  <ItemTitle className="max-w-full truncate text-xs">{artifact.title}</ItemTitle>
+                  <ItemDescription className="truncate text-xs">{artifactSubtitle(artifact, t)}</ItemDescription>
                 </ItemContent>
               </button>
               <ItemActions>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button type="button" variant="outline" size="sm" aria-label={`打开 ${artifact.title}`}>
-                      打开方式
+                    <Button type="button" variant="outline" size="sm" aria-label={t('artifactList.openAria', { defaultValue: '打开 {{title}}', title: artifact.title })}>
+                      {t('artifactList.openWith', { defaultValue: '打开方式' })}
                       <ChevronDown data-icon="inline-end" />
                     </Button>
                   </DropdownMenuTrigger>
@@ -106,7 +110,7 @@ export function ArtifactAttachmentList({
                     ) : null}
                     <DropdownMenuItem onSelect={() => void openInNewTab(artifact, key)}>
                       <ExternalLink />
-                      新标签打开
+                      {t('artifactList.openNewTab', { defaultValue: '新标签打开' })}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -138,22 +142,23 @@ function ArtifactPreviewDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const path = artifact ? artifactPathForPreview(artifact) : '';
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="grid h-[min(900px,calc(100dvh-48px))] !w-[calc(100vw-32px)] !max-w-[calc(100vw-32px)] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:!w-[calc(100vw-48px)] sm:!max-w-[min(1400px,calc(100vw-48px))]">
         <DialogHeader className="border-b border-border px-5 py-4 pr-12">
-          <DialogTitle className="truncate text-[15px]">{artifact?.title ?? '预览'}</DialogTitle>
-          <DialogDescription className="truncate text-[12px]">{artifact ? artifactSubtitle(artifact) : ''}</DialogDescription>
+          <DialogTitle className="truncate text-sm">{artifact?.title ?? t('artifactList.preview', { defaultValue: '预览' })}</DialogTitle>
+          <DialogDescription className="truncate text-xs">{artifact ? artifactSubtitle(artifact, t) : ''}</DialogDescription>
         </DialogHeader>
         <div className="min-h-0 bg-background">
           {!state || state.status === 'loading' ? (
             <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              正在打开文件内容...
+              {t('artifactList.opening', { defaultValue: '正在打开文件内容...' })}
             </div>
           ) : state.status === 'error' ? (
-            <div className="flex h-full items-center justify-center px-6 text-sm text-rose-500">{state.message}</div>
+            <div className="flex h-full items-center justify-center px-6 text-sm text-destructive">{state.message}</div>
           ) : artifactPreviewKind(path) === 'html' ? (
             <div className="h-full p-3">
               <ArtifactPreviewContent content={state.content} path={path} fullHeight className="rounded-lg" />
@@ -174,6 +179,7 @@ async function loadArtifactContent(
   key: string,
   previews: Record<string, PreviewState>,
   setPreviews: (updater: (current: Record<string, PreviewState>) => Record<string, PreviewState>) => void,
+  t: ReturnType<typeof useTranslation>['t'],
 ): Promise<string> {
   const existing = previews[key];
   if (existing?.status === 'ready') {
@@ -183,9 +189,9 @@ async function loadArtifactContent(
   setPreviews((current) => ({ ...current, [key]: { status: 'loading' } }));
   try {
     const path = artifactLocalPath(artifact);
-    const content = path ? await fetchLocalArtifact(path) : (artifact.preview ?? '');
+    const content = path ? await fetchLocalArtifact(path, t) : (artifact.preview ?? '');
     if (!content && (!path || artifactPreviewNeedsText(path))) {
-      throw new Error('没有可打开的文件内容');
+      throw new Error(t('artifactList.noContent', { defaultValue: '没有可打开的文件内容' }));
     }
     setPreviews((current) => ({ ...current, [key]: { status: 'ready', content } }));
     return content;
@@ -196,14 +202,14 @@ async function loadArtifactContent(
   }
 }
 
-async function fetchLocalArtifact(path: string): Promise<string> {
+async function fetchLocalArtifact(path: string, t: ReturnType<typeof useTranslation>['t']): Promise<string> {
   const response = await webApiFetch(`/api/artifacts/local?path=${encodeURIComponent(path)}`);
   const data = (await response.json().catch(() => ({}))) as { content?: unknown; error?: unknown };
   if (!response.ok) {
     throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${response.status}`);
   }
   if (typeof data.content !== 'string') {
-    throw new Error('文件内容为空');
+    throw new Error(t('artifactList.emptyContent', { defaultValue: '文件内容为空' }));
   }
   return data.content;
 }
@@ -224,22 +230,22 @@ function artifactLocalPath(artifact: ArtifactView): string | undefined {
   return artifact.path ?? artifactPathFromTitle(artifact.title);
 }
 
-function artifactSubtitle(artifact: ArtifactView): string {
+function artifactSubtitle(artifact: ArtifactView, t: ReturnType<typeof useTranslation>['t']): string {
   const path = artifactLocalPath(artifact) ?? artifact.href ?? artifact.title;
   const ext = fileExtension(path);
   if (artifact.href || artifact.kind === 'url') {
-    return '链接';
+    return t('artifactList.subtitleLink', { defaultValue: '链接' });
   }
   if (ext === 'md' || ext === 'mdx') {
-    return `文档 · ${ext.toUpperCase()}`;
+    return t('artifactList.subtitleDoc', { defaultValue: '文档 · {{ext}}', ext: ext.toUpperCase() });
   }
   if (artifactPreviewKind(path) === 'html') {
-    return `网页 · ${ext.toUpperCase()}`;
+    return t('artifactList.subtitleWeb', { defaultValue: '网页 · {{ext}}', ext: ext.toUpperCase() });
   }
   if (artifact.kind === 'diff') {
-    return ext ? `文件 · ${ext.toUpperCase()}` : '文件';
+    return ext ? t('artifactList.subtitleFile', { defaultValue: '文件 · {{ext}}', ext: ext.toUpperCase() }) : t('artifactList.subtitleFilePlain', { defaultValue: '文件' });
   }
-  return ext ? `文件 · ${ext.toUpperCase()}` : '文件';
+  return ext ? t('artifactList.subtitleFile', { defaultValue: '文件 · {{ext}}', ext: ext.toUpperCase() }) : t('artifactList.subtitleFilePlain', { defaultValue: '文件' });
 }
 
 function artifactPathForPreview(artifact: ArtifactView): string {

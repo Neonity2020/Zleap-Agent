@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import clsx from 'clsx';
 import hljs from 'highlight.js';
 
@@ -77,9 +77,9 @@ type CodeViewProps = {
 /**
  * Syntax-highlighted code, coloured by the `.hljs-*` token palette in
  * globals.css (so it tracks light/dark). Shared by the assistant markdown
- * renderer (fenced blocks) and the 调度台 file viewer (`lineNumbers` on).
+ * renderer (fenced blocks) and the workspace-console file viewer (`lineNumbers` on).
  */
-export function CodeView({ code, lang, lineNumbers = false, highlight = true, className }: CodeViewProps) {
+function CodeViewImpl({ code, lang, lineNumbers = false, highlight = true, className }: CodeViewProps) {
   const ref = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -100,11 +100,11 @@ export function CodeView({ code, lang, lineNumbers = false, highlight = true, cl
   return (
     <div
       className={clsx(
-        'hljs soft-scroll overflow-x-auto rounded-sm border border-border bg-surface-2 text-[13px] leading-6',
+        'hljs soft-scroll w-full min-w-0 max-w-full overflow-x-auto rounded-sm border border-border bg-muted text-xs leading-6',
         className,
       )}
     >
-      <div className="flex min-w-full">
+      <div className="flex min-w-0">
         {lineNumbers ? (
           <div
             aria-hidden
@@ -122,3 +122,6 @@ export function CodeView({ code, lang, lineNumbers = false, highlight = true, cl
     </div>
   );
 }
+
+/** Memoized: highlight.js parsing runs on mount/update; props are all primitives. */
+export const CodeView = memo(CodeViewImpl);

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Check, Copy, RotateCcw, Trash2 } from 'lucide-react';
 import type { DisplayMessage, RunStatus, ToolCallView, WorkPane } from '../lib/types';
 import type { SpaceItem } from '../lib/spaces';
@@ -26,7 +27,7 @@ type MessageProps = {
 };
 
 /** Routes a committed message to its renderer. Tool calls are NOT shown here —
- *  the 调度台 (workspace) owns the full tool history; the conversation shows a
+ *  the workspace console owns the full tool history; the conversation shows a
  *  progressive summary chip instead (count + currently-running tool). */
 export function Message({
   message,
@@ -40,8 +41,8 @@ export function Message({
   onResendMessage,
   isLatest = false,
 }: MessageProps) {
-  // Tool calls are intentionally NOT shown in the conversation — the 调度台
-  // (workspace) already renders the full tool history. Keep the data for the
+  // Tool calls are intentionally NOT shown in the conversation — the workspace
+  // console already renders the full tool history. Keep the data for the
   // console; just skip rendering a chip here.
   if (message.role === 'tool') {
     return null;
@@ -87,7 +88,7 @@ export function Message({
   }
   if (message.role === 'system') {
     return (
-      <div className="rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-[13px] leading-6 text-rose-500">
+      <div className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs leading-6 text-destructive">
         {message.text}
       </div>
     );
@@ -152,6 +153,7 @@ function MessageActions({
   onDelete?: () => void;
   onResend?: () => void;
 }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const trimmed = text.trim();
   const time = formatMessageTime(ts);
@@ -162,18 +164,18 @@ function MessageActions({
     <div
       onMouseLeave={() => setCopied(false)}
       className={cn(
-        'mt-2 flex items-center gap-2 text-[11px] text-muted-foreground transition-opacity',
+        'mt-2 flex items-center gap-2 text-2xs text-muted-foreground transition-opacity',
         align === 'end' ? 'justify-end pr-1' : 'justify-start pl-1',
         visible ? 'opacity-100' : 'opacity-0 group-hover/message:opacity-100 group-focus-within/message:opacity-100',
       )}
     >
       {onResend ? (
-        <MessageActionButton disabled={disabled} title="重新发送" ariaLabel="重新发送消息" onClick={onResend}>
+        <MessageActionButton disabled={disabled} title={t('common.resend')} ariaLabel={t('common.resend')} onClick={onResend}>
           <RotateCcw className="h-3.5 w-3.5" />
         </MessageActionButton>
       ) : null}
       {onDelete ? (
-        <MessageActionButton disabled={disabled} title="删除" ariaLabel="删除消息" onClick={onDelete}>
+        <MessageActionButton disabled={disabled} title={t('common.delete')} ariaLabel={t('common.delete')} onClick={onDelete}>
           <Trash2 className="h-3.5 w-3.5" />
         </MessageActionButton>
       ) : null}
@@ -184,11 +186,11 @@ function MessageActions({
             void copyTextToClipboard(trimmed).then((ok) => setCopied(ok));
           }}
           className={cn(
-            'inline-flex h-5 w-5 items-center justify-center rounded transition hover:bg-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
-            copied ? 'bg-muted text-ink' : 'text-muted-foreground',
+            'inline-flex h-6 w-6 items-center justify-center rounded-md transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+            copied ? 'bg-muted text-foreground' : 'text-muted-foreground',
           )}
-          title={copied ? '已复制' : '复制'}
-          aria-label={copied ? '已复制' : '复制消息'}
+          title={copied ? t('common.copied') : t('common.copy')}
+          aria-label={copied ? t('common.copied') : t('common.copy')}
         >
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
         </button>
@@ -216,7 +218,7 @@ function MessageActionButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition hover:bg-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:pointer-events-none disabled:opacity-40"
+      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:pointer-events-none disabled:opacity-40"
       title={title}
       aria-label={ariaLabel}
     >

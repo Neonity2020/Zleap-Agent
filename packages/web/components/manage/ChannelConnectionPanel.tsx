@@ -7,9 +7,8 @@ import { LogOut, PlugZap, QrCode, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { postJson, webApiFetch } from '@/lib/api';
 import { qrImageSrc } from '@/lib/connectionQr';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ManagePreviewBlock } from './manage-ui';
+import { ManagePreviewBlock, ManageStatusBadge } from './manage-ui';
 
 type ConnectionPrompt =
   | { kind: 'qr'; image: string; caption?: string }
@@ -120,9 +119,9 @@ export function ChannelConnectionPanel({ channel, enabled }: { channel: string; 
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-muted-foreground">{t('connection.status', { defaultValue: '连接状态' })}</span>
-        <Badge variant={connected ? 'secondary' : 'outline'} className="h-5 px-1.5 text-[10px] font-normal">
+        <ManageStatusBadge variant={connected ? 'secondary' : 'outline'}>
           {statusLabel}
-        </Badge>
+        </ManageStatusBadge>
         {connected && state?.account ? (
           <span className="text-xs text-muted-foreground">
             {t('connection.account', { defaultValue: '账号' })}：<span className="font-mono text-foreground">{state.account}</span>
@@ -133,7 +132,7 @@ export function ChannelConnectionPanel({ channel, enabled }: { channel: string; 
       {showQr && displayQr ? (
         <div className="flex flex-col items-center gap-3 rounded-lg border border-border/60 bg-muted/30 p-4">
           {qrLoadFailed ? (
-            <div className="flex size-56 items-center justify-center rounded bg-surface-1 text-muted-foreground">
+            <div className="flex size-56 items-center justify-center rounded bg-card text-muted-foreground">
               <QrCode className="size-10" />
             </div>
           ) : (
@@ -172,7 +171,7 @@ export function ChannelConnectionPanel({ channel, enabled }: { channel: string; 
 
       {showGenerating ? (
         <div className="flex flex-col items-center gap-3 rounded-lg border border-border/60 bg-muted/30 p-4">
-          <div className="flex size-56 items-center justify-center rounded bg-surface-1 text-muted-foreground">
+          <div className="flex size-56 items-center justify-center rounded bg-card text-muted-foreground">
             <QrCode className="size-10 animate-pulse" />
           </div>
           <p className="text-center text-xs leading-relaxed text-muted-foreground">
@@ -182,13 +181,13 @@ export function ChannelConnectionPanel({ channel, enabled }: { channel: string; 
       ) : null}
 
       {phase === 'error' && state?.error ? (
-        <ManagePreviewBlock className="text-xs text-amber-700 dark:text-amber-300">
+        <ManagePreviewBlock className="text-xs text-warning">
           {t('connection.error', { defaultValue: '连接异常' })}：{state.error}
         </ManagePreviewBlock>
       ) : null}
 
       {waitingForGatewayState ? (
-        <ManagePreviewBlock className="text-xs text-amber-700 dark:text-amber-300">
+        <ManagePreviewBlock className="text-xs text-warning">
           {t('connection.gatewayNotRunning', {
             defaultValue:
               '配置已启用，但还没有收到网关进程的连接状态。请确认网关进程正在运行；开发环境可执行 pnpm dev:gateway。网关上报后会自动显示二维码或授权入口。',

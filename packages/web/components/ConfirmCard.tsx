@@ -32,7 +32,7 @@ export function ConfirmCard({ request, onApprove, onDeny, onDismiss }: ConfirmCa
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-foreground">{config.label}</span>
-            <Badge variant="secondary" className="h-5 max-w-full truncate font-mono text-[10px] font-normal">
+            <Badge variant="secondary" className="h-5 max-w-full truncate font-mono text-2xs font-normal">
               {request.name}
             </Badge>
           </div>
@@ -54,7 +54,7 @@ export function ConfirmCard({ request, onApprove, onDeny, onDismiss }: ConfirmCa
 
       {detail ? (
         <div className="max-h-28 overflow-auto border-b border-border/60 px-4 py-2.5">
-          <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-muted-foreground">{detail}</pre>
+          <pre className="whitespace-pre-wrap break-all font-mono text-2xs leading-relaxed text-muted-foreground">{detail}</pre>
         </div>
       ) : null}
 

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import '../lib/i18n';
 import { ImagePreviewDialog, UserMessage } from '../components/UserMessage';
 
 vi.mock('../components/ui/dialog', () => ({

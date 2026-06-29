@@ -16,7 +16,7 @@ type SpaceThemePickerProps = {
  * Color + icon selectors for a space's theme, rendered as full-width dropdowns so
  * they line up with the rest of the form. Both lists are driven by the shared
  * registry in lib/spaces.ts (the same one every renderer reads), so what you pick
- * here is exactly what the sidebar, 调度台 tabs, and chat blocks will show.
+ * here is exactly what the sidebar, workspace-console tabs, and chat blocks will show.
  */
 export function SpaceThemePicker({ icon, accent, onIconChange, onAccentChange }: SpaceThemePickerProps) {
   const { t } = useTranslation();

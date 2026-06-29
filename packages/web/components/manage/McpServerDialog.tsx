@@ -7,12 +7,11 @@ import { Check } from 'lucide-react';
 import { slugify } from '@/lib/utils';
 import { patchJson, postJson } from '@/lib/api';
 import type { McpServerView } from '@/lib/useResources';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ManageDialog, ManageField, ManageForm, ManagePreviewBlock } from './manage-ui';
+import { ManageDialog, ManageDialogFooterActions, ManageField, ManageForm, ManagePreviewBlock } from './manage-ui';
 
 type Transport = 'stdio' | 'sse' | 'http';
 type Mode = 'paste' | 'manual';
@@ -212,6 +211,7 @@ export function McpServerDialog({ open, onOpenChange, avatarId, server, onSaved 
     <ManageDialog
       open={open}
       onOpenChange={onOpenChange}
+      expandable
       title={server ? t('mcp.edit', { defaultValue: 'Edit MCP Server' }) : t('mcp.new', { defaultValue: 'Add MCP Server' })}
       description={
         server
@@ -219,14 +219,12 @@ export function McpServerDialog({ open, onOpenChange, avatarId, server, onSaved 
           : t('mcp.newDesc', { defaultValue: 'Connect an MCP server; its tools are discovered and added to the catalog automatically.' })
       }
       footer={
-        <>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            {t('common.cancel')}
-          </Button>
-          <Button onClick={submit} disabled={busy}>
-            {server ? t('common.save') : t('common.create')}
-          </Button>
-        </>
+        <ManageDialogFooterActions
+          onCancel={() => onOpenChange(false)}
+          onConfirm={submit}
+          confirmLabel={server ? t('common.save') : t('common.create')}
+          busy={busy}
+        />
       }
     >
       <Tabs value={mode} onValueChange={(value) => setMode(value as Mode)} className="flex min-h-[360px] w-full flex-col gap-4">

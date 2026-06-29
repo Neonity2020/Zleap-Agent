@@ -9,7 +9,7 @@ const textareaVariants = cva(
     variants: {
       size: {
         default: "min-h-16 px-2.5 py-2 text-sm",
-        sm: "min-h-14 rounded-[min(var(--radius-md),10px)] px-2 py-1.5 text-[13px]",
+        sm: "min-h-14 rounded-[min(var(--radius-md),10px)] px-2 py-1.5 text-xs",
         xs: "min-h-12 rounded-[min(var(--radius-md),8px)] px-2 py-1.5 text-xs",
       },
     },

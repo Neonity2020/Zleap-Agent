@@ -72,7 +72,7 @@ export function ProjectFolderPicker({ open, onOpenChange, initialPath, defaultPr
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>{t('project.selectFolder')}</DialogTitle>
           <DialogDescription className="truncate font-mono text-xs">{browse?.path ?? '…'}</DialogDescription>
